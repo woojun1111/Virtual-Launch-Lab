@@ -1,0 +1,10 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const html=fs.readFileSync('dist/arcade/index.html','utf8'),elements={};
+const context=new Proxy({},{get:()=>()=>({addColorStop(){}})});
+for(const m of html.matchAll(/id="([^"]+)"/g))elements[m[1]]={textContent:'',style:{},getContext:()=>context,width:1000,height:620};
+elements.seed.value='103';elements.policy.value='learned';
+const callbacks=[];const sandbox={document:{getElementById:id=>{assert(elements[id],id);return elements[id];}},console,performance:{now:()=>0},requestAnimationFrame:f=>callbacks.push(f),setTimeout:f=>callbacks.push(f),Blob,URL};
+vm.createContext(sandbox);vm.runInContext(fs.readFileSync('dist/arcade/learning.js','utf8'),sandbox);vm.runInContext(fs.readFileSync('dist/arcade/app.js','utf8'),sandbox);
+elements.train.onclick();let n=0;while(elements.train.disabled&&n++<400){const f=callbacks.shift();f(0);}assert(n<400);assert.match(elements.episode.textContent,/20,000/);assert.match(elements.metrics.textContent,/100.0%/);
+elements.play.onclick();callbacks.shift()(30000);assert.match(elements.result.textContent,/손상 점수/);
+elements.reset.onclick();assert.match(elements.episode.textContent,/0회/);console.log('Arcade DOM training, evaluation, playback, reset passed');
