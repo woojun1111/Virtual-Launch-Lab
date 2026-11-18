@@ -17,26 +17,37 @@ class View{
  this.scene.add(new T.HemisphereLight(0xc4e5ff,0x223c42,2.6));const sun=new T.DirectionalLight(0xffecd5,3.5);sun.position.set(6,10,8);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-7;sun.shadow.camera.right=7;sun.shadow.camera.top=7;sun.shadow.camera.bottom=-7;this.scene.add(sun);const rim=new T.DirectionalLight(0x65aaff,2);rim.position.set(-5,4,-5);this.scene.add(rim);
  this.rocket=rocket();this.scene.add(this.rocket.group);this.ground();this.trailPoints=[];this.line=new T.Line(new T.BufferGeometry(),new T.LineBasicMaterial({color:0x78ddc3,transparent:true,opacity:.35}));this.scene.add(this.line);
  const geo=new T.BufferGeometry();geo.setAttribute('position',new T.Float32BufferAttribute(new Float32Array(180*3),3));this.smoke=new T.Points(geo,new T.PointsMaterial({color:0xb7c6cf,size:.12,transparent:true,opacity:.15,depthWrite:false}));this.scene.add(this.smoke);
- this.mode='follow';this.theta=.8;this.phi=.18;this.distance=7.8;this.cutaway=false;this.showTrail=true;this.showExhaust=true;
+ this.mode='follow';this.illustration=true;this.lookTarget=null;this.theta=.8;this.phi=.18;this.distance=7.8;this.cutaway=false;this.showTrail=true;this.showExhaust=true;
  this.bind();this.resize=new ResizeObserver(()=>this.fit());this.resize.observe(container);this.fit();this.canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();const el=document.getElementById('render-error');el.hidden=false;el.textContent='그래픽 연결이 중단되었습니다. 페이지를 새로고침하세요.';});
  }
  ground(){const T=root.THREE,mat=new T.MeshStandardMaterial({color:0x273c4b,roughness:.9}),pad=new T.Mesh(new T.CylinderGeometry(2.2,2.4,.18,64),mat);pad.position.y=-.09;pad.receiveShadow=true;this.scene.add(pad);const land=new T.Mesh(new T.PlaneGeometry(1000,1000),new T.MeshStandardMaterial({color:0x142a35,roughness:1}));land.rotation.x=-Math.PI/2;land.position.y=-.2;land.receiveShadow=true;this.scene.add(land);const grid=new T.GridHelper(80,80,0x426075,0x243d4e);grid.position.y=-.19;this.scene.add(grid);
+ const marks=[];for(let h=0;h<=160;h+=5){marks.push(new T.Vector3(-2.7,h,0),new T.Vector3(-2.7+(h%10===0?.45:.2),h,0));}marks.push(new T.Vector3(-2.7,0,0),new T.Vector3(-2.7,160,0));this.scene.add(new T.LineSegments(new T.BufferGeometry().setFromPoints(marks),new T.LineBasicMaterial({color:0x527489,transparent:true,opacity:.45})));
+
  for(const r of [1,1.8]){const m=new T.Mesh(new T.TorusGeometry(r,.012,8,100),new T.MeshBasicMaterial({color:0xc9a969}));m.rotation.x=Math.PI/2;m.position.y=.008;this.scene.add(m);}
  const structure=new T.MeshStandardMaterial({color:0x5a7488,metalness:.6,roughness:.5});for(const x of [-.22,.22])for(const z of [-.22,.22]){const m=new T.Mesh(new T.BoxGeometry(.05,3.3,.05),structure);m.position.set(x-1.1,1.65,z);m.castShadow=true;this.scene.add(m);}for(let i=0;i<8;i++){const m=new T.Mesh(new T.BoxGeometry(.5,.035,.5),structure);m.position.set(-1.1,i*.43,0);this.scene.add(m);}
  const arm=new T.Mesh(new T.BoxGeometry(.75,.05,.08),structure);arm.position.set(-.7,2.25,0);this.scene.add(arm);
  }
  fit(){const r=this.container.getBoundingClientRect();if(!r.width||!r.height)return;this.camera.aspect=r.width/r.height;this.camera.updateProjectionMatrix();this.renderer.setSize(r.width,r.height,false);}
  bind(){let drag=null;this.canvas.addEventListener('pointerdown',e=>{drag=[e.clientX,e.clientY];this.canvas.setPointerCapture(e.pointerId);});this.canvas.addEventListener('pointermove',e=>{if(!drag)return;this.theta-=(e.clientX-drag[0])*.006;this.phi=Math.max(-.15,Math.min(1.3,this.phi+(e.clientY-drag[1])*.005));drag=[e.clientX,e.clientY];});for(const name of ['pointerup','pointercancel'])this.canvas.addEventListener(name,()=>drag=null);this.canvas.addEventListener('wheel',e=>{e.preventDefault();this.distance=Math.max(3,Math.min(30,this.distance*Math.exp(e.deltaY*.001)));},{passive:false});this.canvas.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','+','-','='].includes(e.key))return;e.preventDefault();if(e.key==='ArrowLeft')this.theta-=.1;if(e.key==='ArrowRight')this.theta+=.1;if(e.key==='ArrowUp')this.phi=Math.min(1.3,this.phi+.1);if(e.key==='ArrowDown')this.phi=Math.max(-.15,this.phi-.1);if(['+','='].includes(e.key))this.distance=Math.max(3,this.distance*.9);if(e.key==='-')this.distance=Math.min(30,this.distance*1.1);});}
- reset(){this.trailPoints=[];this.line.geometry.dispose();this.line.geometry=new THREE.BufferGeometry();}
- update(o){const T=root.THREE;this.rocket.booster.position.set(o.separated?-1:0,o.boosterHeight??o.height,0);this.rocket.upper.position.set(o.separated?1:0,o.upperHeight??o.height,0);this.rocket.shell.material.transparent=this.cutaway;this.rocket.shell.material.opacity=this.cutaway?.16:1;this.rocket.shell.material.depthWrite=!this.cutaway;this.rocket.tank.visible=this.cutaway;const f=Math.max(.001,o.fuel/2);this.rocket.tank.scale.y=f;this.rocket.tank.position.y=.575+.425*f;
+ reset(){this.lookTarget=null;this.trailPoints=[];this.line.geometry.dispose();this.line.geometry=new THREE.BufferGeometry();}
+ update(o,renderDt=1/60){const T=root.THREE,presentation=LaunchPresentation.pose(o,this.illustration);
+ const poseStage=(group,height,center,p)=>{group.rotation.set(p.roll,0,p.angle);const pivot=new T.Vector3(0,center,0).applyQuaternion(group.quaternion);group.position.set(p.x-pivot.x,height+center-pivot.y,-pivot.z);group.updateMatrixWorld(true);
+ // Render-only floor clearance; the model remains a point-contact simplification.
+ const box=new T.Box3().setFromObject(group);if(box.min.y<0)group.position.y-=box.min.y;};
+ poseStage(this.rocket.booster,o.boosterHeight??o.height,.8,presentation.booster);
+ poseStage(this.rocket.upper,o.upperHeight??(o.height+1.5),.55,presentation.upper);
+ this.rocket.shell.material.transparent=this.cutaway;this.rocket.shell.material.opacity=this.cutaway?.16:1;this.rocket.shell.material.depthWrite=!this.cutaway;this.rocket.tank.visible=this.cutaway;const f=Math.max(.001,o.fuel/2);this.rocket.tank.scale.y=f;this.rocket.tank.position.y=.575+.425*f;
  const strength=o.thrust/100;this.rocket.plume.visible=this.showExhaust&&strength>0;this.rocket.plume.scale.set(1,Math.max(.05,strength*(1+.07*Math.sin(o.time*44))),1);
  this.smoke.visible=this.showExhaust&&strength>0;const p=this.smoke.geometry.attributes.position;for(let i=0;i<p.count;i++){const u=(i*.618+o.time*.7)%1,a=i*2.4;p.setXYZ(i,Math.cos(a)*u*.75,o.height+.08-u*1.2,Math.sin(a)*u*.75);}p.needsUpdate=true;
- if(o.height>0&&(this.trailPoints.length===0||Math.abs(o.height-this.trailPoints[this.trailPoints.length-1].y)>.5)){this.trailPoints.push(new T.Vector3(o.separated?-1:0,o.height,0));this.line.geometry.dispose();this.line.geometry=new T.BufferGeometry().setFromPoints(this.trailPoints);}
- this.line.visible=this.showTrail;let target=o.height+1.2,tx=o.separated?-1:0;let spread=0;
- if(this.mode==='upper'){target=(o.upperHeight??o.height)+1.8;tx=o.separated?1:0;}
+ if(o.height>0&&(this.trailPoints.length===0||Math.abs(o.height-this.trailPoints[this.trailPoints.length-1].y)>.5)){this.trailPoints.push(new T.Vector3(0,o.height,0));this.line.geometry.dispose();this.line.geometry=new T.BufferGeometry().setFromPoints(this.trailPoints);}
+ this.line.visible=this.showTrail;let target=o.height+1.2,tx=presentation.booster.x;let spread=0;
+ if(this.mode==='upper'){target=(o.upperHeight??o.height)+1.8;tx=presentation.upper.x;}
  if(this.mode==='overview'){target=((o.upperHeight??o.height)+(o.boosterHeight??o.height))/2+1.2;tx=0;spread=Math.abs((o.upperHeight??o.height)-(o.boosterHeight??o.height))*1.8;}
+ if(this.mode==='world'){target=Math.max(o.upperHeight??o.height,o.height)/2+1;tx=0;spread=Math.max(o.upperHeight??o.height,o.height)*1.8;}
  if(this.mode==='pad'){target=1.2;tx=0;}
- const phi=this.mode==='top'?1.45:this.phi,dist=Math.max(this.distance,spread+5)*Math.max(1,1.25/this.camera.aspect);this.camera.position.set(tx+Math.sin(this.theta)*Math.cos(phi)*dist,target+Math.sin(phi)*dist,Math.cos(this.theta)*Math.cos(phi)*dist);this.camera.lookAt(tx,target,0);this.renderer.render(this.scene,this.camera);
+ const phi=this.mode==='top'?1.45:this.phi,dist=Math.max(this.distance,spread+5)*Math.max(1,1.25/this.camera.aspect);const desired=new T.Vector3(tx+Math.sin(this.theta)*Math.cos(phi)*dist,target+Math.sin(phi)*dist,Math.cos(this.theta)*Math.cos(phi)*dist),look=new T.Vector3(tx,target,0);
+ if(!this.lookTarget){this.lookTarget=look;this.camera.position.copy(desired);}else{const alpha=1-Math.exp(-Math.max(0,renderDt)/.16);this.lookTarget.lerp(look,alpha);this.camera.position.lerp(desired,alpha);}this.camera.lookAt(this.lookTarget);
+ this.renderer.render(this.scene,this.camera);
 
  }
 }
