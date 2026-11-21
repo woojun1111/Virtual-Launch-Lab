@@ -1,0 +1,7 @@
+(function(root){
+'use strict';
+function validate(d){if(!d||!Array.isArray(d.traj)||d.traj.length<2||d.traj.length>100000)throw Error('재생 프레임이 필요합니다.');let last=-Infinity;for(const s of d.traj){if(!['t','x','z','vx','vz','th','om','m','u','D'].every(k=>Number.isFinite(s[k])))throw Error('유효하지 않은 상태값');if(s.t<=last||s.m<=0||s.D<0||s.D>1||s.u<0||s.u>1)throw Error('시간/질량/범위 오류');last=s.t;}return d;}
+function sample(d,t){const a=d.traj;t=Math.max(a[0].t,Math.min(t,a.at(-1).t));let i=1;while(i<a.length-1&&a[i].t<t)i++;const p=a[i-1],q=a[i],f=(t-p.t)/(q.t-p.t),s={};for(const k of ['t','x','z','vx','vz','om','m','u','D'])s[k]=p[k]+f*(q[k]-p[k]);s.th=p.th+Math.atan2(Math.sin(q.th-p.th),Math.cos(q.th-p.th))*f;return s;}
+function summarize(d){if(!d||!d.policies)throw Error('평가 데이터 없음');return Object.entries(d.policies).map(([name,rows])=>{if(!Array.isArray(rows)||!rows.length)throw Error('평가 행 없음');const seen=new Set();let success=0,pad=0,damage=0,contact=0;for(const r of rows){if(!Number.isInteger(r.seed)||seen.has(r.seed)||!Number.isFinite(r.damageProxy)||r.damageProxy<0||r.damageProxy>1||typeof r.onPad!=='boolean'||typeof r.touchdown!=='boolean')throw Error('평가 행 오류');seen.add(r.seed);success+=r.outcome==='recovered';pad+=r.onPad;contact+=r.touchdown;damage+=r.damageProxy;}return {name,n:rows.length,success:success/rows.length,pad:pad/rows.length,contact,damage:damage/rows.length};});}
+root.ReplayData={validate,sample,summarize};if(typeof module!=='undefined')module.exports=root.ReplayData;
+})(globalThis);

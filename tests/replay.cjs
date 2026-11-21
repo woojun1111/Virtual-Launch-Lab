@@ -1,0 +1,2 @@
+const assert=require('node:assert/strict'),R=require('../dist/replay/data.js'),d=require('../dist/replay/episode.json'),e=require('../dist/replay/evaluations.json');
+R.validate(d);const first=R.sample(d,-1),last=R.sample(d,1e9);assert.equal(first.x,d.traj[0].x);assert.equal(last.z,d.traj.at(-1).z);assert.equal(last.t,d.traj.at(-1).t);assert.throws(()=>R.validate({...d,traj:[d.traj[0],d.traj[0]]}));const s=R.summarize(e);assert(s.every(r=>r.n===100));console.log(s);
