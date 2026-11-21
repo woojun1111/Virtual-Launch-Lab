@@ -1,0 +1,20 @@
+{
+  "scope": "artifact inspection only; no rollout or training",
+  "storedGeneration": 135,
+  "bestLoggedGeneration": 10,
+  "bestLoggedReturn": -21.09,
+  "storedBestReturn": -21.089279992292578,
+  "weightCount": 1764,
+  "level": 0,
+  "seed": 500000,
+  "outcome": "missed_pad",
+  "onPad": false,
+  "miss": 82.47349858675135,
+  "damageProxy": 0.12978276985281267,
+  "frames": 77,
+  "warnings": [
+    "Log returns are rounded; best-generation attribution relies on supplied save logic.",
+    "A single recorded episode does not reproduce aggregate evaluation.",
+    "Damage proxy is not a calibrated probability of structural failure."
+  ]
+}
