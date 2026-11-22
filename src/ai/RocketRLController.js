@@ -4,7 +4,6 @@
  * to that version's packaging instructions. Existing static pages do not
  * automatically load this module. public/models/* must be served at /models/*.
  */
-import * as ort from 'onnxruntime-web';
 
 export class RocketRLController {
   constructor({modelUrl = '/models/rocket_policy.onnx',
@@ -23,6 +22,7 @@ export class RocketRLController {
     if (this.session) return this;
     if (this._initPromise) return this._initPromise;
     this._initPromise = (async () => {
+      const ort = this.ort = await import('onnxruntime-web');
       // Works on ordinary static hosting without cross-origin isolation headers.
       ort.env.wasm.numThreads = 1;
       const load = async url => {
@@ -78,7 +78,7 @@ export class RocketRLController {
 
   async predictAction(stateArray) {
     if (!this.session) throw new Error('Call init() first');
-    const obs = new ort.Tensor('float32', this.normalizeObs(stateArray), [1, 7]);
+    const obs = new this.ort.Tensor('float32', this.normalizeObs(stateArray), [1, 7]);
     let outputs;
     try {
       outputs = await this.session.run({obs});

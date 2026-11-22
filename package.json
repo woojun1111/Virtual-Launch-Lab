@@ -3,7 +3,19 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "vite --host 127.0.0.1", "build": "vite build", "preview": "vite preview --host 127.0.0.1", "test:web": "node --test tests/web-sim.test.js" },
-  "dependencies": { "three": "0.160.1", "onnxruntime-web": "1.23.2" },
-  "devDependencies": { "vite": "6.4.1" }
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test:web": "node --test tests/web-sim.test.js",
+    "test:legacy": "node tools/test-legacy.cjs",
+    "test": "npm run test:web && npm run test:legacy"
+  },
+  "dependencies": {
+    "three": "0.160.1",
+    "onnxruntime-web": "1.23.2"
+  },
+  "devDependencies": {
+    "vite": "6.4.1"
+  }
 }

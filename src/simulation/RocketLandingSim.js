@@ -41,7 +41,7 @@ export class RocketLandingSim {
 
   getState() { return this.state ? {...this.state} : null; }
 
-  async step(fixedDt = this.config?.dt) {
+  async step(fixedDt = this.config?.dt, manualAction = null) {
     if (!this.state) throw new Error('Call init() and reset() first');
     if (this._stepping) throw new Error('Concurrent step() calls are not allowed');
     if (this.state.done) throw new Error('Episode ended; call reset()');
@@ -50,9 +50,19 @@ export class RocketLandingSim {
     this._stepping = true;
     try {
       const old = this.state, c = this.config, dt = c.dt;
-      const a = await this.controller.predictAction([
-        old.x,old.y,old.vx,old.vy,old.theta,old.omega,old.fuel,
-      ]);
+      let a;
+      if (manualAction !== null) {
+        if (![manualAction.thrustRatio,manualAction.gimbalRad].every(Number.isFinite))
+          throw new Error('Manual action must contain finite thrustRatio and gimbalRad');
+        const ratio=Math.max(0,Math.min(1,manualAction.thrustRatio));
+        const limit=c.max_gimbal_deg*Math.PI/180;
+        a={thrust:old.fuel>0?c.max_thrust*ratio:0,thrustRatio:old.fuel>0?ratio:0,
+          gimbalRad:Math.max(-limit,Math.min(limit,manualAction.gimbalRad))};
+      } else {
+        a = await this.controller.predictAction([
+          old.x,old.y,old.vx,old.vy,old.theta,old.omega,old.fuel,
+        ]);
+      }
       const {thrust,thrustRatio,gimbalRad} = a;
       if (![thrust,thrustRatio,gimbalRad].every(Number.isFinite)) throw new Error('Invalid action');
       const mass = c.dry_mass+old.fuel;

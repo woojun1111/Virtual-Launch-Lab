@@ -76,3 +76,26 @@ test('smoke emission requires actual thrust and downward exhaust; pool resets an
  assert.equal(smoke.active.reduce((a,b)=>a+b,0),0);assert.equal(smoke.positions,positions);
  smoke.reset();assert.ok(smoke.alphas.every(a=>a===0));smoke.dispose();assert.equal(scene.children.length,0);
 });
+
+import {ManualRocketController} from '../src/controls/ManualRocketController.js';
+test('manual override bypasses policy, allows cutoff, clamps limits and empty fuel',async()=>{
+ const c=controller();c.predictAction=()=>{throw new Error('Policy must not run');};
+ const sim=await new RocketLandingSim(c).init();sim.reset();
+ let s=await sim.step(.05,{thrustRatio:0,gimbalRad:10});assert.equal(s.thrust,0);assert.equal(s.gimbalRad,Math.PI/12);
+ s=await sim.step(.05,{thrustRatio:2,gimbalRad:-10});assert.equal(s.thrust,22000);assert.equal(s.gimbalRad,-Math.PI/12);
+ sim.reset([0,100,0,0,0,0,0]);s=await sim.step(.05,{thrustRatio:1,gimbalRad:0});assert.equal(s.thrust,0);
+ await assert.rejects(sim.step(.05,{thrustRatio:NaN,gimbalRad:0}),/finite/);
+});
+test('keyboard responds once per dt, centers gimbal, releases and removes listeners',()=>{
+ const target=new EventTarget();let toggles=0;
+ const c=new ManualRocketController({target,onToggleMode:()=>toggles++});
+ const key=(type,code)=>{const e=new Event(type,{cancelable:true});Object.defineProperty(e,'code',{value:code});target.dispatchEvent(e);};
+ key('keydown','ArrowLeft');key('keydown','Space');
+ let a=c.update(.05);assert.equal(a.thrustRatio,1);assert.ok(a.gimbalRad<0);
+ key('keyup','ArrowLeft');key('keyup','Space');const old=Math.abs(a.gimbalRad);
+ a=c.update(.05);assert.equal(a.thrustRatio,0);assert.ok(Math.abs(a.gimbalRad)<old);
+ key('keydown','KeyM');assert.equal(toggles,1);
+ key('keydown','Space');target.dispatchEvent(new Event('blur'));assert.equal(c.update(.05).thrustRatio,0);
+ key('keydown','Space');c.reset();assert.equal(c.keys.size,0);
+ c.dispose();key('keydown','KeyM');assert.equal(toggles,1);
+});

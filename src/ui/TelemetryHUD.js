@@ -1,10 +1,13 @@
 export class TelemetryHUD {
-  constructor({ onReset, initialFuel = 500.0 } = {}) {
+  constructor({ onReset, onModeChange, initialFuel = 500.0, initialMode = 'MANUAL' } = {}) {
     if (!Number.isFinite(initialFuel) || initialFuel <= 0) throw new Error('initialFuel must be positive');
     this.onReset = onReset;
+    this.onModeChange = onModeChange;
     this.initialFuel = initialFuel;
     this._injectStyles();
     this._createDOM();
+    this._createModeControls();
+    this.setMode(initialMode, false);
   }
 
   _injectStyles() {
@@ -219,7 +222,7 @@ export class TelemetryHUD {
       .vll-hud-root * { box-sizing: border-box; }
       .vll-btn-reset:focus-visible { outline: 3px solid #fbbf24; outline-offset: 3px; }
       @media (max-width: 640px) {
-        .vll-top-left { top: 8px; left: 8px; }
+        .vll-top-left { top: 8px; left: 8px; max-width: calc(100% - 16px); max-height: 44vh; overflow: auto; }
         .vll-telemetry-panel { top: auto; bottom: 8px; right: 8px; width: 220px; padding: 10px; gap: 5px; }
         .vll-result-banner { width: calc(100% - 24px); top: 28%; padding: 12px; }
       }
@@ -392,6 +395,38 @@ export class TelemetryHUD {
     this.els.status.textContent = isLanded ? '● LANDED' : timeout ? '● TIME LIMIT' : '● LOST';
     this.els.status.style.color = isLanded ? '#10b981' : '#ef4444';
   }
+  _createModeControls() {
+    const panel=this.root.querySelector('.vll-top-left');
+    const modes=document.createElement('div');modes.className='vll-mode-switch';
+    modes.style.cssText='display:flex;gap:6px';
+    this.modeButtons={};
+    for (const mode of ['AI','MANUAL']) {
+      const button=document.createElement('button');button.className='vll-btn-reset';
+      button.textContent=mode==='AI'?'AI AUTOPILOT':'MANUAL [M]';
+      button.onclick=()=>this.setMode(mode,true);modes.append(button);this.modeButtons[mode]=button;
+    }
+    this.manualGuide=document.createElement('div');this.manualGuide.className='vll-badge';
+    this.manualGuide.style.maxWidth='290px';
+    this.manualGuide.textContent='SPACE / ↑: 누르는 동안 점화 · ↑/↓: 출력 · ←/→: 짐벌 · M: 모드 · R: 초기화. 수동은 컷오프 0% 허용, PPO는 40~100%.';
+    panel.append(modes,this.manualGuide);
+  }
+
+  setMode(mode, notify=true) {
+    if (!['AI','MANUAL'].includes(mode)) throw new Error('Unknown control mode');
+    // Requested changes are confirmed by the app after pending inference/model loading.
+    if (notify && this.onModeChange) {this.onModeChange(mode);return;}
+    this.mode=mode;
+    for (const [name,button] of Object.entries(this.modeButtons)) {
+      button.setAttribute('aria-pressed',String(name===mode));
+      button.style.background=name===mode?'#155e75':'';
+    }
+    this.manualGuide.hidden=mode!=='MANUAL';
+    this.root.querySelector('.vll-subtitle').textContent=mode==='MANUAL'
+      ? '키보드 수동 조종 · 학습된 정책 아님' : 'PPO 정책 추론 · 브라우저 학습 아님';
+  }
+
+  setModeBusy(busy) {Object.values(this.modeButtons).forEach(b=>{b.disabled=busy;});}
+
   setMessage(message) {
     this.els.status.textContent = message;
     this.els.status.style.color = '#fbbf24';
@@ -404,6 +439,7 @@ export class TelemetryHUD {
   dispose() {
     this.root.remove();
     this.onReset = null;
+    this.onModeChange = null;
     if (!document.querySelector('.vll-hud-root')) document.getElementById('vll-hud-style')?.remove();
   }
 }

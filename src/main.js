@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RocketLandingSim } from './simulation/RocketLandingSim.js';
-import { ManualController } from './ai/ManualController.js';
+import physicsConfig from '../shared/physics_config.json';
+import RocketRLController from './ai/RocketRLController.js';
+import { ManualRocketController } from './controls/ManualRocketController.js';
 import { TelemetryHUD } from './ui/TelemetryHUD.js';
 import { TrajectoryVisualizer } from './scene/TrajectoryVisualizer.js';
 import { ExhaustPlumeParticles } from './scene/ExhaustPlumeParticles.js';
@@ -10,9 +12,20 @@ import { RocketVisual } from './scene/RocketMeshBuilder.js';
 export class VirtualLaunchLabApp {
   constructor() {
     this.container = document.getElementById('app') || document.body;
-    this.mode = new URLSearchParams(location.search).get('mode') === 'ppo' ? 'ppo' : 'manual';
-    this.manual = this.mode === 'manual' ? new ManualController() : null;
-    this.sim = new RocketLandingSim(this.manual ?? undefined);
+    this.requestedMode = new URLSearchParams(location.search).get('mode') === 'ppo' ? 'AI' : 'MANUAL';
+    this.controlMode = 'MANUAL';
+    this.aiController = new RocketRLController();
+    // Load constants without requiring ONNX artifacts for manual use.
+    this.sim = new RocketLandingSim({
+      config:Object.freeze({...physicsConfig}),
+      async init(){},
+      async predictAction(){throw new Error('AI model is not loaded; supply a manual action');},
+    });
+    this.manualController = new ManualRocketController({onToggleMode:()=>{
+      void this.changeMode(this.controlMode==='AI'?'MANUAL':'AI');
+    }});
+    this.switchingMode = false;
+    this.episodeVersion = 0;
     this.paused = true;
     this.rocketVisual = new RocketVisual(10.0);
 
@@ -25,10 +38,11 @@ export class VirtualLaunchLabApp {
     this.running = false;
     this.disposed = false;
     this.failed = false;
-    this.hud = new TelemetryHUD({ onReset: () => this.resetSimulation() });
+    this.hud = new TelemetryHUD({ onReset: () => this.resetSimulation(), initialMode:this.controlMode,
+      onModeChange:mode=>{void this.changeMode(mode);} });
     this._createControls();
     this.hud.setResetEnabled(false);
-    this.hud.setMessage(this.manual ? 'INITIALIZING' : 'LOADING PPO MODEL');
+    this.hud.setMessage('INITIALIZING');
     this.latestState = null;
 
     this._initScene();
@@ -55,6 +69,7 @@ export class VirtualLaunchLabApp {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.container.appendChild(this.renderer.domElement);
+    this.renderer.domElement.tabIndex=0;
 
     // 카메라 오빗 컨트롤
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -106,17 +121,21 @@ export class VirtualLaunchLabApp {
     if (this.running || this.disposed) return;
     try {
       await this.sim.init();
+      if (this.disposed) return;
       if (Math.abs(this.sim.config.dt-this.FIXED_DT) > 1e-12)
         throw new Error('physics_config.dt must be 0.05');
       this.rocketVisual.dispose();
       this.rocketVisual = new RocketVisual(this.sim.config.rocket_length);
       this.scene.add(this.rocketVisual.rootGroup);
       this.trajectoryVis.gravity = this.sim.config.gravity;
+      this.manualController.maxGimbalRad=this.sim.config.max_gimbal_deg*Math.PI/180;
+      this.manualController.minThrustRatio=this.sim.config.min_thrust_ratio;
       this.hud.initialFuel = this.sim.config.initial_fuel_mass;
       this.running = true;
       this.hud.setResetEnabled(true);
       this.resetSimulation();
       this.frameId = requestAnimationFrame(t => this._animate(t));
+      if (this.requestedMode==='AI') await this.changeMode('AI');
     } catch (error) {
       this._showError(error);
     }
@@ -132,6 +151,7 @@ export class VirtualLaunchLabApp {
   }
 
   _applyReset() {
+    this.episodeVersion++;
     this.resetRequested = false;
     this.failed = false;
     this.accumulator = 0;
@@ -143,6 +163,7 @@ export class VirtualLaunchLabApp {
       theta: random(-.2,.2), omega: 0,
       fuel: this.sim.config.initial_fuel_mass,
     });
+    this.manualController.reset();
     this.rocketVisual.resetVisuals();
     this.trajectoryVis.reset();
     this.exhaustParticles.reset();
@@ -183,7 +204,8 @@ export class VirtualLaunchLabApp {
     if (this.paused || this.pendingStep || this.resetRequested || this.failed || document.hidden ||
         this.latestState.done || this.accumulator+1e-12 < this.FIXED_DT) return;
     this.accumulator = Math.max(0,this.accumulator-this.FIXED_DT);
-    this.pendingStep = this.sim.step(this.FIXED_DT)
+    const manualAction=this.controlMode==='MANUAL'?this.manualController.update(this.FIXED_DT):null;
+    this.pendingStep = this.sim.step(this.FIXED_DT,manualAction)
       .then(state => {
         if (!this.disposed && !this.resetRequested) {
           this.latestState = state;
@@ -208,39 +230,18 @@ export class VirtualLaunchLabApp {
 
   _createControls() {
     const panel = this.hud.root.querySelector('.vll-top-left');
-    this.hud.root.querySelector('.vll-subtitle').textContent = this.manual
-      ? '수동 물리 실험 · 학습된 정책 아님' : 'PPO 추론 · 브라우저에서 학습하지 않음';
-    const modes = document.createElement('div');
-    modes.innerHTML = '<a href="?mode=manual">수동 실험</a> · <a href="?mode=ppo">PPO 모델 실행</a>';
-    modes.style.cssText = 'background:#0f172a;padding:10px;border-radius:6px';
-    modes.querySelectorAll('a').forEach(a => {a.style.color='#7dd3fc';});
-    panel.appendChild(modes);
     this.playButton = document.createElement('button');
     this.playButton.className = 'vll-btn-reset';
     this.playButton.textContent = '시뮬레이션 시작';
     this.playButton.onclick = () => {
-      if (!this.running || this.failed || this.latestState?.done) return;
+      if (!this.running || this.switchingMode || this.failed || this.latestState?.done) return;
       this.paused = !this.paused;
       this.accumulator = 0; this.lastFrame = null;
       this.playButton.textContent = this.paused ? '계속 실행' : '일시정지';
+      this.manualController.keys.clear();
+      this.renderer.domElement.focus();
     };
     panel.appendChild(this.playButton);
-    if (this.manual) {
-      const box = document.createElement('div'); box.className='vll-badge';
-      for (const [key,label,min,max,value] of [['rawThrust','추력',-1,1,0],['rawGimbal','짐벌',-1,1,0]]) {
-        const row = document.createElement('label'); row.style.display='block';
-        const text = document.createElement('span');
-        const input = document.createElement('input');
-        input.type='range'; input.min=min; input.max=max; input.step=.01; input.value=value;
-        input.setAttribute('aria-label',label); input.style.width='150px';
-        const update = () => {
-          this.manual[key]=Number(input.value);
-          text.textContent = key === 'rawThrust' ? `추력 ${Math.round((.4+(Number(input.value)+1)*.3)*100)}% ` : `짐벌 ${(Number(input.value)*15).toFixed(1)}° `;
-        };
-        input.oninput=update; update(); row.append(text,input); box.append(row);
-      }
-      panel.append(box);
-    }
     const note=document.createElement('div'); note.className='vll-badge';
     note.textContent='하강 착륙 실험 · 2D 물리 / 3D 표시 · R: 초기화';
     panel.append(note);
@@ -250,11 +251,48 @@ export class VirtualLaunchLabApp {
     panel.append(legend);
   }
 
+  async changeMode(mode) {
+    if (!this.running || this.disposed || this.switchingMode || mode===this.controlMode) return;
+    this.switchingMode=true;this.hud.setModeBusy(true);
+    const wasPaused=this.paused;
+    const episodeVersion=this.episodeVersion;
+    this.paused=true;this.accumulator=0;this.manualController.keys.clear();
+    try {
+      await this.pendingStep;
+      if (mode==='AI') {
+        this.hud.setMessage('LOADING PPO MODEL');
+        await this.aiController.init();
+        // The physics constants loaded for both controllers must match.
+        for (const [key,value] of Object.entries(this.sim.config))
+          if (this.aiController.config[key]!==value) throw new Error(`Physics mismatch: ${key}`);
+      }
+      if (this.disposed) return;
+      this.controlMode=mode;
+      if (mode==='AI') this.sim.controller=this.aiController;
+      this.manualController.reset();this.manualController.setEnabled(mode==='MANUAL');
+      this.hud.setMode(mode,false);this.hud.setMessage(mode==='AI'?'PPO READY':'MANUAL READY');
+      this.failed=false;
+      // Never resume an episode which was reset while the model was loading.
+      this.paused=this.episodeVersion!==episodeVersion ? true : wasPaused;
+      this.playButton.textContent=this.paused?'계속 실행':'일시정지';
+      this.renderer.domElement.focus();
+    } catch(error) {
+      if (!this.disposed) {
+        this.hud.setMode(this.controlMode,false);
+        this.hud.setMessage(`모드 전환 실패: ${error.message}`);
+        this.playButton.textContent='계속 실행';
+      }
+    } finally {
+      this.switchingMode=false;this.lastFrame=null;this.accumulator=0;
+      if (!this.disposed) this.hud.setModeBusy(false);
+    }
+  }
+
   _showError(error) {
     this.failed = true;
     this.accumulator = 0;
     this.hud.setMessage(`ERROR: ${error.message}`);
-    if (!this.manual) this.hud.root.querySelector('.vll-subtitle').textContent = '모델 로드 실패: ONNX와 norm_stats.json을 확인하거나 수동 실험을 선택하세요.';
+
     console.error(error);
   }
 
@@ -271,7 +309,7 @@ export class VirtualLaunchLabApp {
           target?.isContentEditable || /INPUT|TEXTAREA|SELECT/.test(target?.tagName)) return;
       if (event.key.toLowerCase() === 'r') this.resetSimulation();
     };
-    this.onVisibility = () => { this.accumulator=0; this.lastFrame=null; };
+    this.onVisibility = () => { this.accumulator=0; this.lastFrame=null; this.manualController.keys.clear(); };
     window.addEventListener('resize',this.onResize);
     window.addEventListener('keydown',this.onKey);
     document.addEventListener('visibilitychange',this.onVisibility);
@@ -295,8 +333,10 @@ export class VirtualLaunchLabApp {
     this.controls.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
+    this.manualController.dispose();
     this.hud.dispose();
-    await this.sim.controller.dispose();
+    if (this.aiController._initPromise) await this.aiController._initPromise.catch(()=>{});
+    await this.aiController.dispose();
   }
 }
 
