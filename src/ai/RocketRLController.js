@@ -1,16 +1,11 @@
-/** Requires onnxruntime-web in the frontend package (not installed here).
- * This repository currently has no root package.json or JS bundler.
- * Use an ESM bundler with onnxruntime-web and serve its WASM assets according
- * to that version's packaging instructions. Existing static pages do not
- * automatically load this module. public/models/* must be served at /models/*.
- */
+// Vite bundles shared constants; only trained model artifacts use HTTP.
+import physicsConfig from '../../shared/physics_config.json' with { type: 'json' };
 
 export class RocketRLController {
   constructor({modelUrl = '/models/rocket_policy.onnx',
     statsUrl = '/models/norm_stats.json',
-    configUrl = new URL('../../shared/physics_config.json', import.meta.url),
     sessionOptions = {executionProviders: ['wasm']}} = {}) {
-    this.urls = {modelUrl, statsUrl, configUrl};
+    this.urls = {modelUrl, statsUrl};
     this.sessionOptions = sessionOptions;
     this.session = null;
     this.config = null;
@@ -22,17 +17,18 @@ export class RocketRLController {
     if (this.session) return this;
     if (this._initPromise) return this._initPromise;
     this._initPromise = (async () => {
-      const ort = this.ort = await import('onnxruntime-web');
-      // Works on ordinary static hosting without cross-origin isolation headers.
-      ort.env.wasm.numThreads = 1;
-      const load = async url => {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`Cannot load ${url}: HTTP ${response.status}`);
-        return response.json();
-      };
-      const [config, stats] = await Promise.all([
-        load(this.urls.configUrl), load(this.urls.statsUrl),
-      ]);
+      const config = physicsConfig;
+      const response = await fetch(this.urls.statsUrl);
+      const missingModelMessage = '모델 파일(public/models/norm_stats.json)이 없습니다. export_onnx.py를 먼저 실행하세요.';
+      // Static hosts may serve index.html with HTTP 200 for a missing asset.
+      const contentType = (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+      if (!response.ok || !(contentType === 'application/json' || /^application\/[a-z0-9!#$&^_.+-]+\+json$/.test(contentType))) {
+        throw new Error(missingModelMessage);
+      }
+      let stats;
+      try { stats = await response.json(); }
+      catch { throw new Error('모델 정규화 파일(public/models/norm_stats.json)이 올바른 JSON이 아닙니다. export_onnx.py를 다시 실행하세요.'); }
+      if (!stats || typeof stats !== 'object' || Array.isArray(stats)) throw new Error('Invalid normalization statistics');
       for (const key of ['dt', 'dry_mass', 'max_thrust', 'rocket_length', 'moment_of_inertia']) {
         if (!Number.isFinite(config[key]) || config[key] <= 0) throw new Error(`Invalid ${key}`);
       }
@@ -47,6 +43,9 @@ export class RocketRLController {
       }
       if (stats.obs_var.some(x => x < 0) || !Number.isFinite(stats.epsilon) || stats.epsilon <= 0 ||
           !Number.isFinite(stats.clip_obs) || stats.clip_obs <= 0) throw new Error('Invalid normalization statistics');
+      const ort = this.ort = await import('onnxruntime-web');
+      // Works without cross-origin isolation headers on ordinary static hosting.
+      ort.env.wasm.numThreads = 1;
       const session = await ort.InferenceSession.create(this.urls.modelUrl, this.sessionOptions);
       if (!session.inputNames.includes('obs') || !session.outputNames.includes('action')) {
         await session.release();

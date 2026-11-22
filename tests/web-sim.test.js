@@ -99,3 +99,27 @@ test('keyboard responds once per dt, centers gimbal, releases and removes listen
  key('keydown','Space');c.reset();assert.equal(c.keys.size,0);
  c.dispose();key('keydown','KeyM');assert.equal(toggles,1);
 });
+
+import RocketRLController from '../src/ai/RocketRLController.js';
+test('missing or HTML normalization response gives actionable error before JSON parsing',async t=>{
+ const expected='모델 파일(public/models/norm_stats.json)이 없습니다. export_onnx.py를 먼저 실행하세요.';
+ let calls=0;
+ for (const [ok,type] of [[false,'application/json'],[true,'text/html; charset=utf-8'],[true,'']]) {
+  t.mock.method(globalThis,'fetch',async url=>{
+   calls++;assert.equal(url,'/models/norm_stats.json');
+   return {ok,headers:new Headers({'content-type':type}),json(){throw new Error('Must not parse');}};
+  });
+  const controller=new RocketRLController();
+  await assert.rejects(controller.init(),{message:expected});
+  assert.equal(controller._initPromise,null);
+  t.mock.restoreAll();
+ }
+ assert.equal(calls,3); // No physics_config HTTP request.
+});
+test('JSON response is parsed and schema checked; malformed JSON gives clear error',async t=>{
+ t.mock.method(globalThis,'fetch',async()=>new Response('{bad',{headers:{'content-type':'application/json'}}));
+ await assert.rejects(new RocketRLController().init(),/올바른 JSON이 아닙니다/);
+ t.mock.restoreAll();
+ t.mock.method(globalThis,'fetch',async()=>new Response('null',{headers:{'content-type':'application/json; charset=utf-8'}}));
+ await assert.rejects(new RocketRLController().init(),/Invalid normalization statistics/);
+});
