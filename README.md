@@ -1,3 +1,48 @@
+# Landing Lab 웹 실행 (2026-11-22)
+
+현재 새 진입점은 루트 `index.html` + `src/main.js`입니다. 이전 `dist/index.html`은 기존 발사 실험이며 새 UI가 아닙니다.
+
+## Windows / VS Code
+
+1. Node.js 22 LTS 이상 설치 후 저장소 최신 내용을 받습니다 (`git pull`).
+2. `start-simulator.cmd`를 실행하거나 터미널에서 아래 명령을 실행합니다.
+
+```sh
+npm ci
+npm run dev -- --open
+```
+
+브라우저에 표시된 localhost 주소로 접속합니다. HTML 파일 더블클릭으로는 실행되지 않습니다.
+
+- 기본 **수동 실험**: 시작/일시정지, 추력·짐벌 슬라이더, 리셋 버튼 또는 R 키.
+- **PPO 모델 실행**: 학습·내보내기한 ONNX 모델을 사용합니다. 모델이 없으면 오류와 수동 모드 링크를 표시합니다. 임의 정책으로 대체하지 않습니다.
+- 카메라: 드래그 회전, 휠 확대. HUD: 고도, 수평 위치, 속도, 피치, 짐벌, 연료, 추력, 종료 결과.
+- 현재 범위는 공중에서 시작하는 2D 착륙 환경을 3D로 표시하는 것입니다. 발사·단분리·궤도·그리드핀 공력·실시간 PPO 학습은 포함하지 않습니다. 그리드 핀과 다리 전개는 시각 효과입니다.
+
+## PPO 파일 준비 (별도 실행)
+
+```sh
+python -m pip install -r rl-pipeline/requirements.txt
+python rl-pipeline/train_ppo.py
+python rl-pipeline/export_onnx.py
+```
+
+결과 `public/models/rocket_policy.onnx`, `public/models/norm_stats.json`이 있어야 PPO 모드가 동작합니다. 이번 변경에는 학습된 모델을 포함하지 않았으며 학습 성능을 주장하지 않습니다. 환경 상수·보상은 `shared/physics_config.json`과 `rl-pipeline/env/rocket_landing_env.py`를 참고하세요.
+
+## 빌드 및 검증
+
+```sh
+npm run test:web
+npm run build
+npm run preview
+```
+
+정적 배포 결과는 `out/`입니다. Python과 JS는 같은 0.05초 명시적 오일러 순서를 사용합니다. 추론은 한 번에 한 스텝만 실행합니다. 화면 주사율과 무관하게 물리 스텝을 유지하며, 장치가 느리면 실제 시간 대비 재생이 느려질 수 있습니다. 부동소수점·ONNX 차이로 비트 단위 동일성은 보장하지 않습니다.
+
+---
+
+## 이전 실험 기록
+
 # Launch Lab v0.4 — 물리 실험 + Recovery Arcade
 
 새 게임 모드: [Recovery Arcade](https://virtual-launch-lab-woojun.aa01066365388.chatgpt.site/arcade/index.html). 아래 기존 물리 설명과 별도로 문서 끝에 v0.4의 규칙·검증을 기록했습니다.

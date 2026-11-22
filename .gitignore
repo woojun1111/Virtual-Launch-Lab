@@ -5,3 +5,8 @@ __pycache__/
 /training_curve*.png
 /trajectory_log*.json
 /trajectory_plot*.png
+/node_modules/
+/build/
+/rl-pipeline/models/
+
+/out/

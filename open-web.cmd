@@ -1,2 +1,2 @@
 @echo off
-start "" "%~dp0dist\index.html"
+call "%~dp0start-simulator.cmd"
