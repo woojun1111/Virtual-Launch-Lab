@@ -61,7 +61,7 @@ def plot_trajectory(rows, destination: Path) -> None:
             ax.set_xlim(min(float(x.min()), -2)-margin, max(float(x.max()), 2)+margin)
             ax.set_ylim(min(float(y.min()), 0)-margin, float(y.max())+margin)
     ax.set(xlabel='x [m]', ylabel='y [m]', title='One deterministic-policy episode')
-    ax.set_aspect('equal', adjustable='datalim')
+    ax.set_aspect('equal', adjustable='box')
     ax.grid(alpha=.2)
     ax.legend()
     tx.step([r['t'] for r in rows], [r['thrust'] for r in rows], where='pre')
