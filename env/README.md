@@ -57,3 +57,49 @@ reset(options={'initial_state': [...]})로 시험 조건을 지정할 수 있습
 검증: Gymnasium check_env와 unittest 10개 통과. 관측 공간의 위치/속도 범위를
 무한대로 선언했으므로 check_env의 무한 범위 권고 경고가 출력될 수 있습니다.
 범위를 넘긴 종료 상태도 유효한 관측으로 반환하기 위한 선언이며 NaN/inf 상태는 거부합니다.
+
+## PPO 학습과 1회 평가
+
+저장소 루트에서:
+
+```sh
+python -m pip install -r requirements-rl.txt
+python train_rl.py
+python evaluate_rl.py
+```
+
+학습은 기본 500,000 timesteps, 단일 DummyVecEnv, 관측/보상 VecNormalize를 사용합니다.
+rollout 크기를 2,000으로 두어 기본 실행이 500,000스텝을 넘지 않도록 했습니다.
+50,000스텝마다 models/ppo_landing_50000_steps.zip 형태의 모델과
+models/ppo_landing_vecnormalize_50000_steps.pkl 형태의 통계를 함께 저장합니다.
+최종 파일은 models/ppo_landing_final.zip, models/vec_normalize.pkl입니다.
+Monitor는 정규화 안쪽에서 원래 에피소드 return을 기록합니다.
+training_curve.png는 에피소드 누적 보상과 최대 50개 에피소드 이동평균입니다.
+
+평가는 같은 환경 기본값과 저장된 정규화 통계를 로드하며 training=False,
+norm_reward=False, deterministic=True로 한 에피소드만 실행합니다.
+trajectory_log.json은 초기 상태와 매 스텝 종료 상태의 배열이며,
+t(s), x/y(m), vx/vy(m/s), theta(rad), thrust(N), gimbal(rad)을 기록합니다.
+thrust/gimbal은 해당 행 직전 구간에 적용된 값입니다. 초기 행의 출력 0은 아직
+행동이 적용되지 않았다는 뜻입니다. 추가 필드 force_theta는 해당 구간 시작 자세와
+짐벌의 합으로, 적분 후 자세와 혼동하지 않고 힘의 화살표를 그리는 데 사용합니다.
+자동 초기화 이전의 원래 종료 상태를 별도 보존하므로 최종 접지 값이 손실되지 않습니다.
+trajectory_plot.png에는 궤적/추력 벡터와 추력 시간 그래프가 저장됩니다.
+화살표 길이는 표시용 공통 배율이며 실제 기하 변위가 아닙니다.
+
+다른 모델을 평가할 때는 반드시 동일 스텝의 정규화 통계를 선택합니다.
+
+```sh
+python evaluate_rl.py --model models/ppo_landing_50000_steps.zip --vec-normalize models/ppo_landing_vecnormalize_50000_steps.pkl --output checkpoint_50000.json --plot checkpoint_50000.png
+```
+
+기존 결과를 덮어쓰지 않도록 비어 있지 않은 models-dir과 기존 출력 파일은 거부합니다.
+새 실행은 --models-dir models/run2 --curve-path training_curve_run2.png 등으로 구분하세요.
+학습 중단/재개 기능은 이번 스크립트에 포함하지 않습니다.
+
+검증: 512스텝의 짧은 PPO 학습을 실제 실행해 128/256/384/512스텝 체크포인트와
+각 정규화 통계, 최종 모델 및 곡선 생성을 확인했습니다. 이를 로드한 평가 에피소드는
+69스텝 후 crashed로 끝났고 초기 상태를 포함한 70개 JSON 행과 그래프가 생성됐습니다.
+이는 코드 연결 검증이며 학습 성공이나 회수 성능의 증거가 아닙니다.
+500,000스텝 본학습은 실행하지 않았습니다. Python 테스트 11개는 환경 API와
+평가 시 정규화 동결/종료 상태 보존을 검사합니다.
