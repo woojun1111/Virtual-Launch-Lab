@@ -3,6 +3,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RocketLandingSim } from './simulation/RocketLandingSim.js';
 import { ManualController } from './ai/ManualController.js';
 import { TelemetryHUD } from './ui/TelemetryHUD.js';
+import { TrajectoryVisualizer } from './scene/TrajectoryVisualizer.js';
+import { ExhaustPlumeParticles } from './scene/ExhaustPlumeParticles.js';
 import { RocketVisual } from './scene/RocketMeshBuilder.js';
 
 export class VirtualLaunchLabApp {
@@ -70,6 +72,10 @@ export class VirtualLaunchLabApp {
 
     // 로켓 3D 모델 씬에 추가
     this.scene.add(this.rocketVisual.rootGroup);
+    this.trajectoryVis = new TrajectoryVisualizer(this.scene);
+    this.exhaustParticles = new ExhaustPlumeParticles(this.scene);
+    this.nozzlePosition = new THREE.Vector3();
+    this.exhaustParticles.setViewport(this.camera,this.renderer.domElement.height);
   }
 
   // 2. 지면 및 착륙 패드(LZ-1) 구성
@@ -105,6 +111,7 @@ export class VirtualLaunchLabApp {
       this.rocketVisual.dispose();
       this.rocketVisual = new RocketVisual(this.sim.config.rocket_length);
       this.scene.add(this.rocketVisual.rootGroup);
+      this.trajectoryVis.gravity = this.sim.config.gravity;
       this.hud.initialFuel = this.sim.config.initial_fuel_mass;
       this.running = true;
       this.hud.setResetEnabled(true);
@@ -137,6 +144,9 @@ export class VirtualLaunchLabApp {
       fuel: this.sim.config.initial_fuel_mass,
     });
     this.rocketVisual.resetVisuals();
+    this.trajectoryVis.reset();
+    this.exhaustParticles.reset();
+    this._recordTrajectory(this.latestState);
     this.hud.hideBanner();
     this.hud.setResetEnabled(true);
     this.paused = true;
@@ -160,6 +170,10 @@ export class VirtualLaunchLabApp {
     if (this.latestState) {
       this.rocketVisual.updateVisuals(this.latestState, timestamp/1000);
       this.hud.update(this.latestState);
+      this.trajectoryVis.updatePrediction(this.latestState,this.latestState.time);
+      this.rocketVisual.getNozzleWorldPosition(this.nozzlePosition);
+      this.exhaustParticles.update(this.latestState,
+        this.paused || document.hidden || this.failed ? 0 : dt,this.nozzlePosition);
     }
     this.controls.update();
     this.renderer.render(this.scene,this.camera);
@@ -171,7 +185,10 @@ export class VirtualLaunchLabApp {
     this.accumulator = Math.max(0,this.accumulator-this.FIXED_DT);
     this.pendingStep = this.sim.step(this.FIXED_DT)
       .then(state => {
-        if (!this.disposed) this.latestState = state;
+        if (!this.disposed && !this.resetRequested) {
+          this.latestState = state;
+          this._recordTrajectory(state);
+        }
         if (state.done) this.accumulator = 0;
       })
       .catch(error => { if (!this.disposed) this._showError(error); })
@@ -181,6 +198,12 @@ export class VirtualLaunchLabApp {
         if (this.resetRequested) this._applyReset();
         else this._pumpPhysics();
       });
+  }
+
+  _recordTrajectory(state) {
+    this.rocketVisual.setPose(state);
+    this.rocketVisual.getNozzleWorldPosition(this.nozzlePosition);
+    this.trajectoryVis.recordStep(state,this.nozzlePosition);
   }
 
   _createControls() {
@@ -221,6 +244,10 @@ export class VirtualLaunchLabApp {
     const note=document.createElement('div'); note.className='vll-badge';
     note.textContent='하강 착륙 실험 · 2D 물리 / 3D 표시 · R: 초기화';
     panel.append(note);
+    const legend = document.createElement('div'); legend.className='vll-badge';
+    legend.style.maxWidth='290px';
+    legend.textContent='파랑: 노즐 궤적 · 점선/링: 추력·항력 제외 낙하지점. 초록 ≤2.5m / 주황 ≤12m / 빨강 >12m. 초록은 착륙 성공을 뜻하지 않습니다.';
+    panel.append(legend);
   }
 
   _showError(error) {
@@ -236,6 +263,7 @@ export class VirtualLaunchLabApp {
       this.camera.aspect = window.innerWidth/window.innerHeight;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(window.innerWidth,window.innerHeight);
+      this.exhaustParticles.setViewport(this.camera,this.renderer.domElement.height);
     };
     this.onKey = event => {
       const target = event.target;
@@ -258,6 +286,8 @@ export class VirtualLaunchLabApp {
     document.removeEventListener('visibilitychange',this.onVisibility);
     await this.pendingStep;
     this.rocketVisual.dispose();
+    this.trajectoryVis.dispose();
+    this.exhaustParticles.dispose();
     this.scene.traverse(object => {
       object.geometry?.dispose();
       if (object.material) (Array.isArray(object.material) ? object.material : [object.material]).forEach(m => m.dispose());

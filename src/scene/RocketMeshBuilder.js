@@ -156,18 +156,14 @@ export class RocketVisual {
     const dt = this._lastTime === null ? 0 : Math.max(0, Math.min(.1, timeElapsed-this._lastTime));
     this._lastTime = timeElapsed;
 
-    // Visual-only ground clearance: the Python model uses point contact at y=0.
-    // This offset does not change dynamics or add a rigid-body contact model.
-    this.rootGroup.position.set(x, y + this.rocketLength * 0.4 + 2.6 * Math.cos(Math.PI*.25), 0);
-    this.rootGroup.rotation.z = theta;
+    this.setPose(simState);
 
-    // 2. 짐벌 노즐 회전 업데이트
-    this.nozzlePivot.rotation.z = gimbalRad;
+
 
     // 3. 추력 화염 스케일 및 고주파 플리커(떨림) 애니메이션
     if (!simState.done && status === 'FLYING' && simState.thrust > 0 && thrustRatio > 0.01) {
       this.flameGroup.visible = true;
-      const flicker = 0.92 + Math.sin(timeElapsed * 65.0) * (1-Math.exp(-5*dt));
+      const flicker = 0.92 + Math.sin(timeElapsed * 65.0) * .08;
       const flameScaleY = thrustRatio * 1.4 * flicker;
       const flameScaleXZ = 0.8 + thrustRatio * 0.4;
 
@@ -186,6 +182,19 @@ export class RocketVisual {
       leg.rotation.z += (targetLegAngle - leg.rotation.z) * (1-Math.exp(-5*dt));
     }
   }
+  setPose(state) {
+    // Display offset only: the simulation still has point contact at y=0.
+    this.rootGroup.position.set(state.x, state.y + this.rocketLength*.4 + 2.6*Math.cos(Math.PI*.25), 0);
+    this.rootGroup.rotation.z = state.theta;
+    this.nozzlePivot.rotation.z = state.gimbalRad;
+  }
+
+  getNozzleWorldPosition(target) {
+    // The flame group's origin is exactly at the nozzle exit.
+    this.rootGroup.updateWorldMatrix(true,true);
+    return this.flameGroup.getWorldPosition(target);
+  }
+
   resetVisuals() {
     this._lastTime = null;
     for (const leg of this.legs) leg.rotation.z = Math.PI*.95;
