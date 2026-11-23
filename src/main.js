@@ -15,7 +15,6 @@ export class VirtualLaunchLabApp {
     this.requestedMode = new URLSearchParams(location.search).get('mode') === 'ppo' ? 'AI' : 'MANUAL';
     this.controlMode = 'MANUAL';
     this.aiController = new RocketRLController();
-    // Load constants without requiring ONNX artifacts for manual use.
     this.sim = new RocketLandingSim({
       config: Object.freeze({ ...physicsConfig }),
       async init() {},
@@ -34,10 +33,11 @@ export class VirtualLaunchLabApp {
     this.autoBenchmarkTimer = null;
     this.autoRestartRequested = false;
     this.simSpeed = 1;
+    this.runCount = 0;
+    this.recentLandings = [];
     this.paused = true;
     this.rocketVisual = new RocketVisual(10.0);
 
-    // 고정 물리 타임스텝 (RL 학습 dt = 0.05초와 일치)
     this.FIXED_DT = 0.05;
     this.accumulator = 0;
     this.lastFrame = null;
@@ -64,18 +64,12 @@ export class VirtualLaunchLabApp {
     this._bindEvents();
   }
 
-  // 1. Three.js 씬, 카메라, 렌더러 초기화
   _initScene() {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x030712); // 야간/새벽 발사장 분위기
+    this.scene.background = new THREE.Color(0x030712);
     this.scene.fog = new THREE.FogExp2(0x030712, 0.0018);
 
-    this.camera = new THREE.PerspectiveCamera(
-      50,
-      window.innerWidth / window.innerHeight,
-      0.1,
-      1500
-    );
+    this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1500);
     this.camera.position.set(0, 60, 140);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -88,12 +82,10 @@ export class VirtualLaunchLabApp {
     this.container.appendChild(this.renderer.domElement);
     this.renderer.domElement.tabIndex = 0;
 
-    // 카메라 오빗 컨트롤
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.target.set(0, 40, 0);
 
-    // 조명 설정
     const ambientLight = new THREE.AmbientLight(0x94a3b8, 0.8);
     this.scene.add(ambientLight);
 
@@ -102,7 +94,6 @@ export class VirtualLaunchLabApp {
     dirLight.castShadow = true;
     this.scene.add(dirLight);
 
-    // 로켓 3D 모델 씬에 추가
     this.scene.add(this.rocketVisual.rootGroup);
     this.trajectoryVis = new TrajectoryVisualizer(this.scene);
     this.exhaustParticles = new ExhaustPlumeParticles(this.scene);
@@ -110,13 +101,10 @@ export class VirtualLaunchLabApp {
     this.exhaustParticles.setViewport(this.camera, this.renderer.domElement.height);
   }
 
-  // 2. 지면 및 착륙 패드(LZ-1) 구성
   _initEnvironment() {
-    // 지면 그리드
     const gridHelper = new THREE.GridHelper(400, 40, 0x334155, 0x1e293b);
     this.scene.add(gridHelper);
 
-    // 콘크리트 착륙 패드 (반지름 12m 원형 패드)
     const padGeo = new THREE.CylinderGeometry(12, 12.5, 0.3, 32);
     const padMat = new THREE.MeshStandardMaterial({ color: 0x172233, roughness: 0.95 });
     const padMesh = new THREE.Mesh(padGeo, padMat);
@@ -124,7 +112,6 @@ export class VirtualLaunchLabApp {
     padMesh.position.y = -0.15;
     this.scene.add(padMesh);
 
-    // 착륙 패드 중앙 타겟 링 (X 마크 대신 발광 링)
     const ringGeo = new THREE.RingGeometry(2.2, 2.7, 32);
     ringGeo.rotateX(-Math.PI / 2);
     const ringMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
@@ -145,12 +132,10 @@ export class VirtualLaunchLabApp {
     this.scene.add(backlight, backlight.target);
   }
 
-  // 3. 시뮬레이션 시작 및 AI 컨트롤러 초기화
   async start() {
     if (this.running || this.disposed) return;
     try {
       await this.sim.init();
-      await this.aiController.init();
       if (this.disposed) return;
       if (Math.abs(this.sim.config.dt - this.FIXED_DT) > 1e-12) {
         throw new Error('physics_config.dt must be 0.05');
@@ -164,7 +149,7 @@ export class VirtualLaunchLabApp {
       this.hud.initialFuel = this.sim.config.initial_fuel_mass;
       this.running = true;
       this.hud.setResetEnabled(true);
-      this._updateRLPanel();
+      this._updateBenchmarkPanel();
       this.resetSimulation();
       this.frameId = requestAnimationFrame((t) => this._animate(t));
       if (this.requestedMode === 'AI') await this.changeMode('AI');
@@ -179,7 +164,6 @@ export class VirtualLaunchLabApp {
     if (!automatic) this.setAutoBenchmark(false);
     this.autoRestartRequested = automatic;
     if (!this.running || this.disposed) return;
-    // A pending inference owns the old state until it completes.
     this.resetRequested = true;
     this.hud.setResetEnabled(false);
     if (!this.pendingStep) this._applyReset();
@@ -212,10 +196,9 @@ export class VirtualLaunchLabApp {
     if (this.autoRestartRequested) this.paused = false;
     this.autoRestartRequested = false;
     this.playButton.textContent = this.paused ? '시뮬레이션 시작' : '일시정지';
-    // Frame the full initial drop and landing pad.
     this.camera.position.set(this.latestState.x * 0.5, 110, 330);
     this.controls.target.set(0, 100, 0);
-    this._updateRLPanel();
+    this._updateBenchmarkPanel();
   }
 
   _animate(timestamp) {
@@ -224,7 +207,6 @@ export class VirtualLaunchLabApp {
     const dt = this.lastFrame === null ? 0 : Math.max(0, (timestamp - this.lastFrame) / 1000);
     this.lastFrame = timestamp;
     if (!this.paused && !document.hidden && !this.failed && this.latestState && !this.latestState.done) {
-      // 배속(1x / 5x / 20x)에 맞춰 물리 타임스텝(FIXED_DT) 누적량 확장
       const maxBacklog = Math.min(2.5, 0.25 * this.simSpeed);
       this.accumulator = Math.min(maxBacklog, this.accumulator + dt * this.simSpeed);
       this._pumpPhysics();
@@ -265,13 +247,15 @@ export class VirtualLaunchLabApp {
           this.latestState = state;
           this._recordTrajectory(state);
           if (state.done) {
-            if (this.controlMode === 'AI' && typeof this.aiController.notifyEpisodeEnd === 'function') {
-              const finalArr = [state.x, state.y, state.vx, state.vy, state.theta, state.omega, state.fuel];
-              this.aiController.notifyEpisodeEnd(
-                finalArr,
-                typeof state.landed === 'boolean' ? state.landed : null
-              );
-              this._updateRLPanel();
+            if (this.controlMode === 'AI') {
+              this.runCount += 1;
+              const landed =
+                typeof state.landed === 'boolean'
+                  ? state.landed
+                  : state.y <= 1.2 && Math.abs(state.x) < 4.5 && Math.abs(state.vy) < 4.5 && Math.abs(state.theta) < 0.22;
+              this.recentLandings.push(landed ? 1 : 0);
+              if (this.recentLandings.length > 20) this.recentLandings.shift();
+              this._updateBenchmarkPanel();
             }
             this.hud.recordResult(state, this.episodeVersion);
             this._scheduleAutoRestart();
@@ -312,17 +296,17 @@ export class VirtualLaunchLabApp {
     }
   }
 
-  _updateRLPanel() {
-    if (!this.rlStatsText || !this.rlStatusTag) return;
+  _updateBenchmarkPanel() {
+    if (!this.benchStatsText || !this.benchStatusTag) return;
     const isAI = this.controlMode === 'AI';
-    this.rlStatusTag.textContent = isAI ? (this.autoBenchmark ? 'AUTO LEARNING' : 'AI ACTIVE') : 'STANDBY';
-    this.rlStatusTag.style.color = isAI ? '#38bdf8' : '#94a3b8';
+    this.benchStatusTag.textContent = isAI ? (this.autoBenchmark ? 'AUTO RUN' : 'AI READY') : 'STANDBY';
+    this.benchStatusTag.style.color = isAI ? '#38bdf8' : '#94a3b8';
 
-    if (typeof this.aiController.getStats === 'function') {
-      const s = this.aiController.getStats();
-      const bestStr = s.bestReward !== null ? s.bestReward.toFixed(1) : '-';
-      this.rlStatsText.textContent = `RUN #${s.episodeCount} · 최근 성공률 ${s.recentRate}% · 보상 ${s.lastReward.toFixed(1)} (최고 ${bestStr})`;
-    }
+    const rate =
+      this.recentLandings.length > 0
+        ? Math.round((this.recentLandings.reduce((a, b) => a + b, 0) / this.recentLandings.length) * 100)
+        : 0;
+    this.benchStatsText.textContent = `RUN #${this.runCount} · 최근 20회 착륙 성공률 ${rate}%`;
   }
 
   _createControls() {
@@ -343,14 +327,13 @@ export class VirtualLaunchLabApp {
     };
     panel.appendChild(this.playButton);
 
-    // 온라인 강화학습 현황 및 배속 제어 패널
-    const rlCard = document.createElement('div');
-    rlCard.className = 'vll-panel vll-badge';
-    rlCard.style.display = 'flex';
-    rlCard.style.flexDirection = 'column';
-    rlCard.style.gap = '6px';
-    rlCard.style.maxWidth = '310px';
-    rlCard.style.padding = '8px 10px';
+    const benchCard = document.createElement('div');
+    benchCard.className = 'vll-panel vll-badge';
+    benchCard.style.display = 'flex';
+    benchCard.style.flexDirection = 'column';
+    benchCard.style.gap = '6px';
+    benchCard.style.maxWidth = '310px';
+    benchCard.style.padding = '8px 10px';
 
     const headerRow = document.createElement('div');
     headerRow.style.display = 'flex';
@@ -361,19 +344,19 @@ export class VirtualLaunchLabApp {
     headerRow.style.letterSpacing = '0.06em';
 
     const titleSpan = document.createElement('span');
-    titleSpan.textContent = 'ONLINE RL TRAINING';
+    titleSpan.textContent = 'PPO POLICY BENCHMARK';
     titleSpan.style.color = '#e2e8f0';
 
-    this.rlStatusTag = document.createElement('span');
-    this.rlStatusTag.textContent = 'STANDBY';
-    this.rlStatusTag.style.color = '#94a3b8';
+    this.benchStatusTag = document.createElement('span');
+    this.benchStatusTag.textContent = 'STANDBY';
+    this.benchStatusTag.style.color = '#94a3b8';
 
-    headerRow.append(titleSpan, this.rlStatusTag);
+    headerRow.append(titleSpan, this.benchStatusTag);
 
-    this.rlStatsText = document.createElement('div');
-    this.rlStatsText.style.fontSize = '11px';
-    this.rlStatsText.style.color = '#cbd5e1';
-    this.rlStatsText.textContent = 'RUN #0 · 최근 성공률 0% · 보상 0.0 (최고 -)';
+    this.benchStatsText = document.createElement('div');
+    this.benchStatsText.style.fontSize = '11px';
+    this.benchStatsText.style.color = '#cbd5e1';
+    this.benchStatsText.textContent = 'RUN #0 · 최근 20회 착륙 성공률 0%';
 
     const btnRow = document.createElement('div');
     btnRow.style.display = 'flex';
@@ -396,32 +379,27 @@ export class VirtualLaunchLabApp {
       btnRow.appendChild(btn);
     }
 
-    const resetRLBtn = document.createElement('button');
-    resetRLBtn.type = 'button';
-    resetRLBtn.textContent = 'AI 초기화';
-    resetRLBtn.style.marginLeft = 'auto';
-    resetRLBtn.style.padding = '3px 8px';
-    resetRLBtn.style.fontSize = '11px';
-    resetRLBtn.style.fontWeight = '600';
-    resetRLBtn.style.borderRadius = '4px';
-    resetRLBtn.style.border = '1px solid rgba(248, 113, 113, 0.45)';
-    resetRLBtn.style.background = 'rgba(127, 29, 29, 0.35)';
-    resetRLBtn.style.color = '#fecaca';
-    resetRLBtn.style.cursor = 'pointer';
-    resetRLBtn.onclick = () => {
-      if (typeof this.aiController.resetTraining === 'function') {
-        this.aiController.resetTraining();
-        this._updateRLPanel();
-        this.hud.setMessage('ONLINE RL RESET', '신경망 가중치가 초기화되었습니다. RUN #1부터 다시 학습합니다.');
-        if (this.controlMode === 'AI') {
-          this.resetSimulation({ automatic: !this.paused });
-        }
-      }
+    const resetCountBtn = document.createElement('button');
+    resetCountBtn.type = 'button';
+    resetCountBtn.textContent = '기록 초기화';
+    resetCountBtn.style.marginLeft = 'auto';
+    resetCountBtn.style.padding = '3px 8px';
+    resetCountBtn.style.fontSize = '11px';
+    resetCountBtn.style.fontWeight = '600';
+    resetCountBtn.style.borderRadius = '4px';
+    resetCountBtn.style.border = '1px solid rgba(148, 163, 184, 0.45)';
+    resetCountBtn.style.background = 'rgba(30, 41, 59, 0.6)';
+    resetCountBtn.style.color = '#e2e8f0';
+    resetCountBtn.style.cursor = 'pointer';
+    resetCountBtn.onclick = () => {
+      this.runCount = 0;
+      this.recentLandings = [];
+      this._updateBenchmarkPanel();
     };
-    btnRow.appendChild(resetRLBtn);
+    btnRow.appendChild(resetCountBtn);
 
-    rlCard.append(headerRow, this.rlStatsText, btnRow);
-    panel.appendChild(rlCard);
+    benchCard.append(headerRow, this.benchStatsText, btnRow);
+    panel.appendChild(benchCard);
     this._setSimSpeed(1);
 
     const note = document.createElement('div');
@@ -450,7 +428,7 @@ export class VirtualLaunchLabApp {
     try {
       await this.pendingStep;
       if (mode === 'AI') {
-        this.hud.setMessage('INITIALIZING ONLINE RL');
+        this.hud.setMessage('LOADING PPO MODEL');
         await this.aiController.init();
         if (!this.aiController.isReady) {
           if (!this.disposed) {
@@ -463,7 +441,6 @@ export class VirtualLaunchLabApp {
           }
           return;
         }
-        // The physics constants loaded for both controllers must match.
         for (const [key, value] of Object.entries(this.sim.config)) {
           if (this.aiController.config[key] !== value) throw new Error(`Physics mismatch: ${key}`);
         }
@@ -474,18 +451,14 @@ export class VirtualLaunchLabApp {
       this.manualController.reset();
       this.manualController.setEnabled(mode === 'MANUAL');
       this.hud.setMode(mode, false);
-      this.hud.setMessage(
-        mode === 'AI' ? 'ONLINE RL READY' : 'MANUAL READY',
-        mode === 'AI' ? this.aiController.loadMessage : ''
-      );
+      this.hud.setMessage(mode === 'AI' ? 'PPO READY' : 'MANUAL READY');
       this.failed = false;
-      // Never resume an episode which was reset while the model was loading.
       this.paused = this.episodeVersion !== episodeVersion ? true : wasPaused;
       this.playButton.textContent = this.paused ? '계속 실행' : '일시정지';
       if (mode === 'AI') {
         this.setAutoBenchmark(true);
       }
-      this._updateRLPanel();
+      this._updateBenchmarkPanel();
       this.renderer.domElement.focus();
     } catch (error) {
       if (!this.disposed) {
@@ -503,13 +476,11 @@ export class VirtualLaunchLabApp {
 
   setAutoBenchmark(enabled) {
     this._clearAutoRestart();
-    // AI 모드(온라인 RL 또는 ONNX 세션)가 준비된 상태에서 자동 연속 실행 허용
-    const aiReady = Boolean(this.aiController.isReady || this.aiController.session);
-    this.autoBenchmark = Boolean(enabled && this.controlMode === 'AI' && aiReady && !this.failed);
+    this.autoBenchmark = Boolean(enabled && this.controlMode === 'AI' && this.aiController.session && !this.failed);
     this.hud.setAutoBenchmark(this.autoBenchmark);
-    this._updateRLPanel();
+    this._updateBenchmarkPanel();
     if (enabled && !this.autoBenchmark) {
-      this.hud.setMessage('자동 반복은 AI AUTOPILOT 모드에서 사용할 수 있습니다.');
+      this.hud.setMessage('자동 반복은 로드된 PPO 모드에서 사용할 수 있습니다.');
     }
     if (this.autoBenchmark) this._scheduleAutoRestart();
   }
@@ -530,7 +501,7 @@ export class VirtualLaunchLabApp {
       return;
     }
     const episode = this.episodeVersion;
-    const delayMs = this.simSpeed >= 10 ? 80 : this.simSpeed > 1 ? 300 : 1200;
+    const delayMs = this.simSpeed >= 10 ? 120 : this.simSpeed > 1 ? 400 : 1200;
     this.autoBenchmarkTimer = setTimeout(() => {
       this.autoBenchmarkTimer = null;
       if (
