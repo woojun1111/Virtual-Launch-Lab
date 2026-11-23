@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 
 export class ExhaustPlumeParticles {
-  constructor(scene, { maxParticles = 600, triggerAltitude = 15.0 } = {}) {
+  constructor(scene, { maxParticles = 900, triggerAltitude = 15.0 } = {}) {
     if (!Number.isInteger(maxParticles) || maxParticles < 1 || !Number.isFinite(triggerAltitude) || triggerAltitude <= 0)
       throw new Error('Invalid particle pool or trigger altitude');
     this.nextSlot = 0;
@@ -80,7 +80,10 @@ export class ExhaustPlumeParticles {
           vec4 texColor = texture2D(uTexture, gl_PointCoord);
           float finalAlpha = texColor.a * vAlpha;
           if (finalAlpha < 0.01) discard;
-          gl_FragColor = vec4(uColor, finalAlpha);
+          // Stylized cool rim lighting, not physical scattering/CFD.
+          float rim = smoothstep(0.05, 0.45, length(gl_PointCoord - vec2(0.5)));
+          vec3 litColor = mix(uColor * 0.55, vec3(0.48, 0.78, 1.0), rim * 0.65);
+          gl_FragColor = vec4(litColor, finalAlpha);
         }
       `,
       transparent: true,
@@ -114,7 +117,7 @@ export class ExhaustPlumeParticles {
       if (this.active[i] === 0) {
         this.active[i] = 1;
         this.ages[i] = 0;
-        this.lifetimes[i] = 0.9 + Math.random() * 1.1; // 0.9 ~ 2.0초 생존
+        this.lifetimes[i] = 1.2 + Math.random() * 1.2; // 0.9 ~ 2.0초 생존
 
         // 지면 충돌 지점 주변에서 생성
         const jitterR = Math.random() * 0.8;
@@ -131,7 +134,7 @@ export class ExhaustPlumeParticles {
         this.velocities[idx + 1] = (0.6 + Math.random() * 1.6) * intensity;
         this.velocities[idx + 2] = Math.sin(radialAngle) * radialSpeed;
 
-        this.baseSizes[i] = (1.6 + Math.random() * 1.4) * (0.6 + 0.4 * intensity);
+        this.baseSizes[i] = (2.0 + Math.random() * 1.8) * (0.6 + 0.4 * intensity);
         this.sizes[i] = this.baseSizes[i];
         this.alphas[i] = 0.0;
         this.nextSlot = (i+1)%this.maxParticles;
@@ -156,7 +159,7 @@ export class ExhaustPlumeParticles {
         Number.isFinite(originX+originY+originZ+angle+thrustRatio)) {
       const intensity = Math.max(0,Math.min(1,(1-originY/this.triggerAltitude)*thrustRatio));
       const impactX = originX+originY*Math.sin(angle)/down;
-      this.spawnAccumulator += 280*intensity*deltaTime;
+      this.spawnAccumulator += 340*intensity*deltaTime;
       while (this.spawnAccumulator >= 1) {
         this._spawnParticle(impactX,intensity,originZ);
         this.spawnAccumulator--;
@@ -200,7 +203,7 @@ export class ExhaustPlumeParticles {
       }
 
       // 연기 구름 팽창 (시간이 지날수록 최대 3.5배 확산)
-      this.sizes[i] = this.baseSizes[i] * (1.0 + lifeRatio * 2.5);
+      this.sizes[i] = this.baseSizes[i] * (1.0 + lifeRatio * 3.0);
 
       // 부드러운 페이드 인(초반 12%) 및 페이드 아웃
       if (lifeRatio < 0.12) {

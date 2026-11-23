@@ -122,8 +122,17 @@ export class RocketVisual {
     const outerFlameGeo = new THREE.ConeGeometry(0.55, 4.0, 16);
     outerFlameGeo.rotateX(Math.PI); // 아래쪽을 향하도록 뒤집기
     outerFlameGeo.translate(0, -2.0, 0);
+    // Vertex gradient is visual only: orange nozzle exit to violet plume tip.
+    const flameColors=new Float32Array(outerFlameGeo.attributes.position.count*3);
+    const hot=new THREE.Color(0xffa02f), cool=new THREE.Color(0x8b5cf6), blended=new THREE.Color();
+    for(let i=0;i<outerFlameGeo.attributes.position.count;i++) {
+      const t=THREE.MathUtils.clamp(-outerFlameGeo.attributes.position.getY(i)/4,0,1);
+      blended.copy(hot).lerp(cool,t);
+      blended.toArray(flameColors,i*3);
+    }
+    outerFlameGeo.setAttribute('color',new THREE.BufferAttribute(flameColors,3));
     const outerFlameMat = new THREE.MeshBasicMaterial({
-      color: 0xff6b00,
+      color: 0xffffff, vertexColors:true, toneMapped:false,
       transparent: true,
       depthWrite: false, blending: THREE.AdditiveBlending,
       opacity: 0.75
@@ -136,7 +145,7 @@ export class RocketVisual {
     innerFlameGeo.rotateX(Math.PI);
     innerFlameGeo.translate(0, -1.1, 0);
     const innerFlameMat = new THREE.MeshBasicMaterial({
-      color: 0xfffbeb,
+      color: 0xd9ffff, toneMapped:false,
       transparent: true,
       depthWrite: false, blending: THREE.AdditiveBlending,
       opacity: 0.95

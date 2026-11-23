@@ -26,6 +26,9 @@ export class VirtualLaunchLabApp {
     }});
     this.switchingMode = false;
     this.episodeVersion = 0;
+    this.autoBenchmark=false;
+    this.autoBenchmarkTimer=null;
+    this.autoRestartRequested=false;
     this.paused = true;
     this.rocketVisual = new RocketVisual(10.0);
 
@@ -39,7 +42,8 @@ export class VirtualLaunchLabApp {
     this.disposed = false;
     this.failed = false;
     this.hud = new TelemetryHUD({ onReset: () => this.resetSimulation(), initialMode:this.controlMode,
-      onModeChange:mode=>{void this.changeMode(mode);} });
+      onModeChange:mode=>{void this.changeMode(mode);},
+      onAutoBenchmarkToggle:enabled=>this.setAutoBenchmark(enabled) });
     this._createControls();
     this.hud.setResetEnabled(false);
     this.hud.setMessage('INITIALIZING');
@@ -53,8 +57,8 @@ export class VirtualLaunchLabApp {
   // 1. Three.js 씬, 카메라, 렌더러 초기화
   _initScene() {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0b1120); // 야간/새벽 발사장 분위기
-    this.scene.fog = new THREE.FogExp2(0x0b1120, 0.0018);
+    this.scene.background = new THREE.Color(0x030712); // 야간/새벽 발사장 분위기
+    this.scene.fog = new THREE.FogExp2(0x030712, 0.0018);
 
     this.camera = new THREE.PerspectiveCamera(
       50,
@@ -68,6 +72,9 @@ export class VirtualLaunchLabApp {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.15;
     this.container.appendChild(this.renderer.domElement);
     this.renderer.domElement.tabIndex=0;
 
@@ -101,7 +108,7 @@ export class VirtualLaunchLabApp {
 
     // 콘크리트 착륙 패드 (반지름 12m 원형 패드)
     const padGeo = new THREE.CylinderGeometry(12, 12.5, 0.3, 32);
-    const padMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.8 });
+    const padMat = new THREE.MeshStandardMaterial({ color: 0x172233, roughness: 0.95 });
     const padMesh = new THREE.Mesh(padGeo, padMat);
     padMesh.receiveShadow = true;
     padMesh.position.y = -.15;
@@ -114,6 +121,14 @@ export class VirtualLaunchLabApp {
     const ringMesh = new THREE.Mesh(ringGeo, ringMat);
     ringMesh.position.y = 0.01;
     this.scene.add(ringMesh);
+    for (const radius of [3.3,8.5,11.7]) {
+      const ring=new THREE.Mesh(new THREE.RingGeometry(radius,radius+.055,128).rotateX(-Math.PI/2),
+        new THREE.MeshBasicMaterial({color:0x38bdf8,transparent:true,opacity:.65,toneMapped:false}));
+      ring.position.y=.02;this.scene.add(ring);
+    }
+    const backlight=new THREE.SpotLight(0x7dd3fc,700,150,Math.PI/5,.8,1.5);
+    backlight.position.set(-25,30,-22);backlight.target.position.set(0,3,0);
+    this.scene.add(backlight,backlight.target);
   }
 
   // 3. 시뮬레이션 시작 및 AI 모델 로드
@@ -142,7 +157,10 @@ export class VirtualLaunchLabApp {
     return this;
   }
 
-  resetSimulation() {
+  resetSimulation({automatic=false}={}) {
+    this._clearAutoRestart();
+    if (!automatic) this.setAutoBenchmark(false);
+    this.autoRestartRequested=automatic;
     if (!this.running || this.disposed) return;
     // A pending inference owns the old state until it completes.
     this.resetRequested = true;
@@ -171,7 +189,9 @@ export class VirtualLaunchLabApp {
     this.hud.hideBanner();
     this.hud.setResetEnabled(true);
     this.paused = true;
-    this.playButton.textContent = '시뮬레이션 시작';
+    if (this.autoRestartRequested) this.paused=false;
+    this.autoRestartRequested=false;
+    this.playButton.textContent = this.paused?'시뮬레이션 시작':'일시정지';
     // Frame the full initial drop and landing pad.
     this.camera.position.set(this.latestState.x*.5, 110, 330);
     this.controls.target.set(0,100,0);
@@ -210,6 +230,10 @@ export class VirtualLaunchLabApp {
         if (!this.disposed && !this.resetRequested) {
           this.latestState = state;
           this._recordTrajectory(state);
+          if (state.done) {
+            this.hud.recordResult(state,this.episodeVersion);
+            this._scheduleAutoRestart();
+          }
         }
         if (state.done) this.accumulator = 0;
       })
@@ -231,7 +255,7 @@ export class VirtualLaunchLabApp {
   _createControls() {
     const panel = this.hud.root.querySelector('.vll-top-left');
     this.playButton = document.createElement('button');
-    this.playButton.className = 'vll-btn-reset';
+    this.playButton.className = 'vll-btn-action';
     this.playButton.textContent = '시뮬레이션 시작';
     this.playButton.onclick = () => {
       if (!this.running || this.switchingMode || this.failed || this.latestState?.done) return;
@@ -242,10 +266,10 @@ export class VirtualLaunchLabApp {
       this.renderer.domElement.focus();
     };
     panel.appendChild(this.playButton);
-    const note=document.createElement('div'); note.className='vll-badge';
+    const note=document.createElement('div'); note.className='vll-panel vll-badge';
     note.textContent='하강 착륙 실험 · 2D 물리 / 3D 표시 · R: 초기화';
     panel.append(note);
-    const legend = document.createElement('div'); legend.className='vll-badge';
+    const legend = document.createElement('div'); legend.className='vll-panel vll-badge';
     legend.style.maxWidth='290px';
     legend.textContent='파랑: 노즐 궤적 · 점선/링: 추력·항력 제외 낙하지점. 초록 ≤2.5m / 주황 ≤12m / 빨강 >12m. 초록은 착륙 성공을 뜻하지 않습니다.';
     panel.append(legend);
@@ -253,6 +277,7 @@ export class VirtualLaunchLabApp {
 
   async changeMode(mode) {
     if (!this.running || this.disposed || this.switchingMode || mode===this.controlMode) return;
+    this.setAutoBenchmark(false);
     this.switchingMode=true;this.hud.setModeBusy(true);
     const wasPaused=this.paused;
     const episodeVersion=this.episodeVersion;
@@ -288,7 +313,32 @@ export class VirtualLaunchLabApp {
     }
   }
 
+  setAutoBenchmark(enabled) {
+    this._clearAutoRestart();
+    // Repeated playback of an already loaded policy only; no learning occurs.
+    this.autoBenchmark=Boolean(enabled && this.controlMode==='AI' && this.aiController.session && !this.failed);
+    this.hud.setAutoBenchmark(this.autoBenchmark);
+    if (enabled && !this.autoBenchmark) this.hud.setMessage('자동 반복은 로드된 PPO 모드에서 사용할 수 있습니다.');
+    if (this.autoBenchmark) this._scheduleAutoRestart();
+  }
+
+  _clearAutoRestart() {
+    if (this.autoBenchmarkTimer!==null) clearTimeout(this.autoBenchmarkTimer);
+    this.autoBenchmarkTimer=null;
+  }
+
+  _scheduleAutoRestart() {
+    if (!this.autoBenchmark || !this.latestState?.done || this.disposed || document.hidden || this.autoBenchmarkTimer!==null) return;
+    const episode=this.episodeVersion;
+    this.autoBenchmarkTimer=setTimeout(()=>{
+      this.autoBenchmarkTimer=null;
+      if (episode===this.episodeVersion && this.autoBenchmark && !this.disposed && !document.hidden && !this.switchingMode)
+        this.resetSimulation({automatic:true});
+    },1500);
+  }
+
   _showError(error) {
+    this.setAutoBenchmark(false);
     this.failed = true;
     this.accumulator = 0;
     this.hud.setMessage(`ERROR: ${error.message}`);
@@ -309,13 +359,16 @@ export class VirtualLaunchLabApp {
           target?.isContentEditable || /INPUT|TEXTAREA|SELECT/.test(target?.tagName)) return;
       if (event.key.toLowerCase() === 'r') this.resetSimulation();
     };
-    this.onVisibility = () => { this.accumulator=0; this.lastFrame=null; this.manualController.keys.clear(); };
+    this.onVisibility = () => { this.accumulator=0; this.lastFrame=null; this.manualController.keys.clear();
+      if (document.hidden) this._clearAutoRestart(); else this._scheduleAutoRestart();
+    };
     window.addEventListener('resize',this.onResize);
     window.addEventListener('keydown',this.onKey);
     document.addEventListener('visibilitychange',this.onVisibility);
   }
 
   async dispose() {
+    this._clearAutoRestart();
     this.disposed = true;
     this.running = false;
     cancelAnimationFrame(this.frameId);

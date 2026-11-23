@@ -9,7 +9,7 @@ export class TrajectoryVisualizer {
     this.positions = new Float32Array(maxPoints*3);
     this.lineGeo = new THREE.BufferGeometry();
     this.lineGeo.setAttribute('position',new THREE.BufferAttribute(this.positions,3).setUsage(THREE.DynamicDrawUsage));
-    this.lineMat = new THREE.LineBasicMaterial({color:0x38bdf8,transparent:true,opacity:.8});
+    this.lineMat = new THREE.LineBasicMaterial({color:0x67e8f9,transparent:true,opacity:.9,toneMapped:false});
     this.trajectoryLine = new THREE.Line(this.lineGeo,this.lineMat);
     this.trajectoryLine.frustumCulled = false;
     this.iipGroup = new THREE.Group(); this.iipGroup.position.y = .22;
@@ -17,6 +17,11 @@ export class TrajectoryVisualizer {
     this.iipRing = new THREE.Mesh(new THREE.RingGeometry(1.1,1.55,32).rotateX(-Math.PI/2),this.ringMat);
     this.iipCenter = new THREE.Mesh(new THREE.RingGeometry(.15,.35,16).rotateX(-Math.PI/2),this.ringMat);
     this.iipGroup.add(this.iipRing,this.iipCenter);
+    this.haloRing = new THREE.Mesh(new THREE.RingGeometry(2.1,2.15,64).rotateX(-Math.PI/2),this.ringMat);
+    this.iipGroup.add(this.haloRing);
+    const mastGeo=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0),new THREE.Vector3(0,6,0)]);
+    this.mastMat=new THREE.LineDashedMaterial({color:0xef4444,dashSize:.4,gapSize:.35,transparent:true,opacity:.55});
+    this.mast=new THREE.Line(mastGeo,this.mastMat);this.mast.computeLineDistances();this.iipGroup.add(this.mast);
     this.projGeo = new THREE.BufferGeometry();
     this.projGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(6),3).setUsage(THREE.DynamicDrawUsage));
     this.projGeo.setAttribute('lineDistance',new THREE.BufferAttribute(new Float32Array(2),1).setUsage(THREE.DynamicDrawUsage));
@@ -69,6 +74,8 @@ export class TrajectoryVisualizer {
     this.iipGroup.position.x=xImpact;
     const pulse=1+Math.sin(elapsedTime*8)*.08;
     this.iipRing.scale.set(pulse,1,pulse);
+    this.haloRing.scale.set(2-pulse,1,2-pulse);
+    this.mastMat.color.setHex(color);
     this.ringMat.color.setHex(color);this.projMat.color.setHex(color);
     const p=this.projGeo.attributes.position;
     p.setXYZ(0,x,y,0);p.setXYZ(1,xImpact,.22,0);p.needsUpdate=true;
@@ -81,6 +88,7 @@ export class TrajectoryVisualizer {
   dispose() {
     this.scene.remove(this.trajectoryLine,this.iipGroup,this.projLine);
     this.lineGeo.dispose();this.lineMat.dispose();this.projGeo.dispose();this.projMat.dispose();
+    this.haloRing.geometry.dispose();this.mast.geometry.dispose();this.mastMat.dispose();
     this.iipRing.geometry.dispose();this.iipCenter.geometry.dispose();this.ringMat.dispose();
   }
 }
