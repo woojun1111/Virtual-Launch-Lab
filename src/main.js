@@ -287,6 +287,14 @@ export class VirtualLaunchLabApp {
       if (mode==='AI') {
         this.hud.setMessage('LOADING PPO MODEL');
         await this.aiController.init();
+        if (!this.aiController.isReady) {
+          if (!this.disposed) {
+            this.hud.setMode(this.controlMode,false);
+            this.hud.setMessage('MODEL UNAVAILABLE',this.aiController.loadMessage + ' 수동 조종은 계속 사용할 수 있습니다.');
+            this.playButton.textContent='계속 실행';
+          }
+          return;
+        }
         // The physics constants loaded for both controllers must match.
         for (const [key,value] of Object.entries(this.sim.config))
           if (this.aiController.config[key]!==value) throw new Error(`Physics mismatch: ${key}`);

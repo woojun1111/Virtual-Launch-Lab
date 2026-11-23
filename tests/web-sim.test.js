@@ -101,7 +101,7 @@ test('keyboard responds once per dt, centers gimbal, releases and removes listen
 });
 
 import RocketRLController from '../src/ai/RocketRLController.js';
-test('missing or HTML normalization response gives actionable error before JSON parsing',async t=>{
+test('missing or HTML normalization response resolves unavailable without JSON parsing',async t=>{
  const expected='모델 파일(public/models/norm_stats.json)이 없습니다. export_onnx.py를 먼저 실행하세요.';
  let calls=0;
  for (const [ok,type] of [[false,'application/json'],[true,'text/html; charset=utf-8'],[true,'']]) {
@@ -110,16 +110,27 @@ test('missing or HTML normalization response gives actionable error before JSON 
    return {ok,headers:new Headers({'content-type':type}),json(){throw new Error('Must not parse');}};
   });
   const controller=new RocketRLController();
-  await assert.rejects(controller.init(),{message:expected});
+  t.mock.method(console,'warn',()=>{});
+  assert.equal(await controller.init(),controller);
+  assert.equal(controller.isReady,false);
+  assert.equal(controller.loadStatus,'unavailable');
+  assert.equal(controller.loadMessage,expected);
   assert.equal(controller._initPromise,null);
   t.mock.restoreAll();
  }
  assert.equal(calls,3); // No physics_config HTTP request.
 });
-test('JSON response is parsed and schema checked; malformed JSON gives clear error',async t=>{
- t.mock.method(globalThis,'fetch',async()=>new Response('{bad',{headers:{'content-type':'application/json'}}));
- await assert.rejects(new RocketRLController().init(),/올바른 JSON이 아닙니다/);
- t.mock.restoreAll();
- t.mock.method(globalThis,'fetch',async()=>new Response('null',{headers:{'content-type':'application/json; charset=utf-8'}}));
- await assert.rejects(new RocketRLController().init(),/Invalid normalization statistics/);
+test('invalid JSON/schema resolves unavailable; missing ONNX and HTML bodies are detected',async t=>{
+ const stats={obs_mean:Array(7).fill(0),obs_var:Array(7).fill(1),epsilon:1e-8,clip_obs:10};
+ for (const scenario of ['bad-json','bad-schema','missing-onnx','html-onnx']) {
+  t.mock.method(console,'warn',()=>{});
+  t.mock.method(globalThis,'fetch',async url=>{
+    if (url.endsWith('.json')) return new Response(scenario==='bad-json'?'{bad':scenario==='bad-schema'?'null':JSON.stringify(stats),{headers:{'content-type':'application/json'}});
+    return scenario==='missing-onnx'?new Response('',{status:404}):new Response('<!doctype html><html>',{headers:{'content-type':'application/octet-stream'}});
+  });
+  const c=new RocketRLController();await c.init();
+  assert.equal(c.isReady,false);assert.equal(c.loadStatus,'unavailable');assert.equal(c.session,null);
+  assert.ok(c.loadMessage.length>0);assert.equal(c._initPromise,null);
+  t.mock.restoreAll();
+ }
 });

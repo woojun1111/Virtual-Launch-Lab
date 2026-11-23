@@ -11,11 +11,16 @@ export class RocketRLController {
     this.config = null;
     this.normStats = null;
     this._initPromise = null;
+    this.isReady = false;
+    this.loadStatus = 'idle';
+    this.loadMessage = '';
   }
 
   async init() {
     if (this.session) return this;
     if (this._initPromise) return this._initPromise;
+    this.loadStatus = 'loading';
+    this.loadMessage = '';
     this._initPromise = (async () => {
       const config = physicsConfig;
       const response = await fetch(this.urls.statsUrl);
@@ -43,10 +48,18 @@ export class RocketRLController {
       }
       if (stats.obs_var.some(x => x < 0) || !Number.isFinite(stats.epsilon) || stats.epsilon <= 0 ||
           !Number.isFinite(stats.clip_obs) || stats.clip_obs <= 0) throw new Error('Invalid normalization statistics');
+      const modelResponse = await fetch(this.urls.modelUrl);
+      const modelType = (modelResponse.headers.get('content-type') ?? '').toLowerCase();
+      if (!modelResponse.ok || modelType.includes('text/html'))
+        throw new Error('모델 파일(public/models/rocket_policy.onnx)이 없습니다. export_onnx.py를 먼저 실행하세요.');
+      const modelBytes = await modelResponse.arrayBuffer();
+      const prefix = new TextDecoder().decode(new Uint8Array(modelBytes,0,Math.min(128,modelBytes.byteLength)));
+      if (!modelBytes.byteLength || /^\s*(?:<!doctype\s+html|<html)/i.test(prefix))
+        throw new Error('ONNX 모델 대신 HTML 또는 빈 파일이 반환되었습니다. public/models/rocket_policy.onnx를 확인하세요.');
       const ort = this.ort = await import('onnxruntime-web');
       // Works without cross-origin isolation headers on ordinary static hosting.
       ort.env.wasm.numThreads = 1;
-      const session = await ort.InferenceSession.create(this.urls.modelUrl, this.sessionOptions);
+      const session = await ort.InferenceSession.create(modelBytes, this.sessionOptions);
       if (!session.inputNames.includes('obs') || !session.outputNames.includes('action')) {
         await session.release();
         throw new Error('Expected ONNX inputs obs and outputs action');
@@ -54,8 +67,16 @@ export class RocketRLController {
       this.config = Object.freeze({...config});
       this.normStats = stats;
       this.session = session;
+      this.isReady = true;
+      this.loadStatus = 'ready';
       return this;
-    })();
+    })().catch(error => {
+      this.isReady = false;
+      this.loadStatus = 'unavailable';
+      this.loadMessage = error instanceof Error ? error.message : String(error);
+      console.warn('[PPO unavailable]', this.loadMessage);
+      return this;
+    });
     try { return await this._initPromise; }
     finally { this._initPromise = null; }
   }
@@ -106,6 +127,9 @@ export class RocketRLController {
     this.session = null;
     this.normStats = null;
     this.config = null;
+    this.isReady = false;
+    this.loadStatus = 'idle';
+    this.loadMessage = '';
   }
 }
 

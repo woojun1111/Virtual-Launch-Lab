@@ -753,6 +753,13 @@ export class TelemetryHUD {
       outDetail: this.root.querySelector('[data-ui="out-detail"]'),
     };
 
+    this.messageDetail=document.createElement('div');
+    this.messageDetail.className='vll-panel';
+    this.messageDetail.style.cssText='font-size:13px;line-height:1.6;overflow-wrap:anywhere;color:#fbbf24';
+    this.messageDetail.hidden=true;
+    this.messageDetail.setAttribute('role','status');
+    this.root.querySelector('.vll-right-panel').append(this.messageDetail);
+    this.els.status.style.cssText='font-size:11px;max-width:110px;flex-shrink:0;text-align:right;overflow-wrap:anywhere';
     this._bindEvents();
   }
 
@@ -787,6 +794,7 @@ export class TelemetryHUD {
   }
 
   hideBanner() {
+    this.messageDetail.hidden=true;
     this.els.outcome.classList.remove('visible', 'landed', 'crashed');
     this.els.status.textContent = '● ACTIVE';
     this.els.status.style.color = '#10b981';
@@ -893,7 +901,13 @@ export class TelemetryHUD {
     this.els.benchmarkToggle.checked=enabled;
   }
   setModeBusy(busy) {this.els.btnAi.disabled=busy;this.els.btnManual.disabled=busy;}
-  setMessage(message) {this.els.status.textContent=message;this.els.status.style.color='#fbbf24';}
+  setMessage(message, detail='') {
+    const long=message.length>32;
+    this.els.status.textContent=long?'NOTICE':message;
+    this.els.status.style.color='#fbbf24';
+    this.messageDetail.textContent=detail || (long?message:'');
+    this.messageDetail.hidden=!this.messageDetail.textContent;
+  }
   setResetEnabled(enabled) {
     for (const id of ['vll-reset','out-action']) this.root.querySelector(`[data-ui="${id}"]`).disabled=!enabled;
   }
