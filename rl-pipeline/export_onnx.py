@@ -4,7 +4,6 @@ Browser must normalize raw observations BEFORE calling the ONNX graph.
 Only load your own trusted SB3 model and pickle normalization files.
 """
 import json
-from pathlib import Path
 
 import torch
 from stable_baselines3 import PPO
@@ -37,7 +36,7 @@ def main():
     for path in [model_path, stats_path]:
         if not path.is_file():
             raise FileNotFoundError(f'Train first; missing {path}')
-    output = Path(__file__).resolve().parents[1] / 'public' / 'models'
+    output = MODELS_DIR / 'export'
     output.mkdir(parents=True, exist_ok=True)
     base = make_base_env()
     try:

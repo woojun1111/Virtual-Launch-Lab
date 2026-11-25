@@ -4,3 +4,4 @@ stable-baselines3
 torch
 onnx
 matplotlib
+onnxruntime
