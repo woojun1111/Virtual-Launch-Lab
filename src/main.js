@@ -429,10 +429,12 @@ export class VirtualLaunchLabApp {
       await this.pendingStep;
       if (mode === 'AI') {
         this.hud.setMessage('LOADING PPO MODEL');
+        if (!this.aiController.isReady) this.hud.setModelConnection('ONNX 로딩 중');
         await this.aiController.init();
         if (!this.aiController.isReady) {
           if (!this.disposed) {
             this.hud.setMode(this.controlMode, false);
+            this.hud.setModelConnection('로드 실패 · ' + this.aiController.loadMessage);
             this.hud.setMessage(
               'MODEL UNAVAILABLE',
               this.aiController.loadMessage + ' 수동 조종은 계속 사용할 수 있습니다.'
@@ -447,7 +449,10 @@ export class VirtualLaunchLabApp {
       }
       if (this.disposed) return;
       this.controlMode = mode;
-      if (mode === 'AI') this.sim.controller = this.aiController;
+      if (mode === 'AI') {
+        this.sim.controller = this.aiController;
+        this.hud.setModelConnection('ONNX 로드 완료');
+      }
       this.manualController.reset();
       this.manualController.setEnabled(mode === 'MANUAL');
       this.hud.setMode(mode, false);

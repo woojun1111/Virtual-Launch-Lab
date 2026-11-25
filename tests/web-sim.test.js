@@ -102,19 +102,19 @@ test('keyboard responds once per dt, centers gimbal, releases and removes listen
 
 import RocketRLController from '../src/ai/RocketRLController.js';
 test('missing or HTML normalization response resolves unavailable without JSON parsing',async t=>{
- const expected='모델 파일(public/models/norm_stats.json)이 없습니다. export_onnx.py를 먼저 실행하세요.';
  let calls=0;
  for (const [ok,type] of [[false,'application/json'],[true,'text/html; charset=utf-8'],[true,'']]) {
   t.mock.method(globalThis,'fetch',async url=>{
-   calls++;assert.equal(url,'/models/norm_stats.json');
-   return {ok,headers:new Headers({'content-type':type}),json(){throw new Error('Must not parse');}};
+   calls++;assert.equal(url,'./models/norm_stats.json');
+   return {ok,status:ok ? 200 : 404,headers:new Headers({'content-type':type}),json(){throw new Error('Must not parse');}};
   });
   const controller=new RocketRLController();
   t.mock.method(console,'warn',()=>{});
   assert.equal(await controller.init(),controller);
   assert.equal(controller.isReady,false);
   assert.equal(controller.loadStatus,'unavailable');
-  assert.equal(controller.loadMessage,expected);
+  assert.match(controller.loadMessage,/norm_stats\.json/);
+  assert.ok(controller.loadMessage.includes(ok ? 'HTTP 200' : 'HTTP 404'));
   assert.equal(controller._initPromise,null);
   t.mock.restoreAll();
  }

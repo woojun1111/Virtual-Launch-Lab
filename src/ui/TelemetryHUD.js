@@ -586,6 +586,7 @@ export class TelemetryHUD {
         <div class="vll-panel vll-badge">
           <div class="vll-title">VLL <span>// BOOSTER GNC OPERATIONS</span></div>
           <div class="vll-subtitle" data-ui="hud-mode-sub">AI AUTOPILOT (PPO) ACTIVE</div>
+          <div class="vll-subtitle" role="status" data-ui="model-connection" style="overflow-wrap:anywhere">AI 모델: 연결 대기</div>
         </div>
 
         <!-- 주행 모드 스위치 -->
@@ -901,6 +902,10 @@ export class TelemetryHUD {
     this.els.benchmarkToggle.checked=enabled;
   }
   setModeBusy(busy) {this.els.btnAi.disabled=busy;this.els.btnManual.disabled=busy;}
+  setModelConnection(message) {
+    this.root.querySelector('[data-ui="model-connection"]').textContent = 'AI 모델: ' + message;
+  }
+
   setMessage(message, detail='') {
     const long=message.length>32;
     this.els.status.textContent=long?'NOTICE':message;

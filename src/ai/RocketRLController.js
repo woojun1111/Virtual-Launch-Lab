@@ -3,8 +3,8 @@ import physicsConfig from '../../shared/physics_config.json' with { type: 'json'
 
 export class RocketRLController {
   constructor({
-    modelUrl = '/models/rocket_policy.onnx',
-    statsUrl = '/models/norm_stats.json',
+    modelUrl = './models/rocket_policy.onnx',
+    statsUrl = './models/norm_stats.json',
     sessionOptions = { executionProviders: ['wasm'] }
   } = {}) {
     this.urls = { modelUrl, statsUrl };
@@ -25,11 +25,17 @@ export class RocketRLController {
     this.loadMessage = '';
     this._initPromise = (async () => {
       const config = physicsConfig;
-      const response = await fetch(this.urls.statsUrl);
-      const missingModelMessage = '모델 파일(public/models/norm_stats.json)이 없습니다. export_onnx.py를 먼저 실행하세요.';
+      const fetchAsset = async (url) => {
+        try {
+          return await fetch(url);
+        } catch (error) {
+          throw new Error(url + ' 요청 실패 · ' + error.message);
+        }
+      };
+      const response = await fetchAsset(this.urls.statsUrl);
       const contentType = (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
       if (!response.ok || !(contentType === 'application/json' || /^application\/[a-z0-9!#$&^_.+-]+\+json$/.test(contentType))) {
-        throw new Error(missingModelMessage);
+        throw new Error(this.urls.statsUrl + ' · HTTP ' + response.status + ' · ' + (contentType || 'Content-Type 없음'));
       }
 
       let stats;
@@ -68,10 +74,10 @@ export class RocketRLController {
         throw new Error('Invalid normalization statistics');
       }
 
-      const modelResponse = await fetch(this.urls.modelUrl);
+      const modelResponse = await fetchAsset(this.urls.modelUrl);
       const modelType = (modelResponse.headers.get('content-type') ?? '').toLowerCase();
       if (!modelResponse.ok || modelType.includes('text/html')) {
-        throw new Error('모델 파일(public/models/rocket_policy.onnx)이 없습니다. export_onnx.py를 먼저 실행하세요.');
+        throw new Error(this.urls.modelUrl + ' · HTTP ' + modelResponse.status + ' · ' + modelType);
       }
 
       const modelBytes = await modelResponse.arrayBuffer();
