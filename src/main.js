@@ -38,7 +38,7 @@ export class VirtualLaunchLabApp {
     this.paused = true;
     this.rocketVisual = new RocketVisual(10.0);
 
-    this.FIXED_DT = 0.05;
+    this.FIXED_DT = physicsConfig.dt;
     this.accumulator = 0;
     this.lastFrame = null;
     this.pendingStep = null;
@@ -137,9 +137,6 @@ export class VirtualLaunchLabApp {
     try {
       await this.sim.init();
       if (this.disposed) return;
-      if (Math.abs(this.sim.config.dt - this.FIXED_DT) > 1e-12) {
-        throw new Error('physics_config.dt must be 0.05');
-      }
       this.rocketVisual.dispose();
       this.rocketVisual = new RocketVisual(this.sim.config.rocket_length);
       this.scene.add(this.rocketVisual.rootGroup);
@@ -249,11 +246,7 @@ export class VirtualLaunchLabApp {
           if (state.done) {
             if (this.controlMode === 'AI') {
               this.runCount += 1;
-              const landed =
-                typeof state.landed === 'boolean'
-                  ? state.landed
-                  : state.y <= 1.2 && Math.abs(state.x) < 4.5 && Math.abs(state.vy) < 4.5 && Math.abs(state.theta) < 0.22;
-              this.recentLandings.push(landed ? 1 : 0);
+              this.recentLandings.push(state.isSuccess ? 1 : 0);
               if (this.recentLandings.length > 20) this.recentLandings.shift();
               this._updateBenchmarkPanel();
             }
