@@ -2,7 +2,7 @@
 
 Three.js로 표시하는 **2D 로켓 착륙 실험실**입니다. 공중에서 시작해 추력과 짐벌을 조절합니다. 수동 조종과 저장소에 포함된 PPO 모델의 브라우저 추론을 지원합니다. 배포 버전 18에서 무작위 하강 50회 중 50회 착륙을 관측했습니다.
 
-[웹 시뮬레이터](https://virtual-launch-lab-woojun.aa01066365388.chatgpt.site) · [이전 실험 기록](docs/legacy-experiments.md)
+[웹 시뮬레이터](https://virtual-launch-lab-woojun.aa01066365388.chatgpt.site) · [개발 파이프라인 한눈에 보기](docs/development-pipeline.md) · [이전 실험 기록](docs/legacy-experiments.md)
 
 ## 실행 (Windows / VS Code)
 
