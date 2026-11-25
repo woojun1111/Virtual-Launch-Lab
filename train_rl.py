@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 
 import matplotlib
 matplotlib.use('Agg')
@@ -14,7 +15,8 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.results_plotter import load_results
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
-from env.rocket_landing_env import RocketLandingEnv
+sys.path.insert(0, str(Path(__file__).resolve().parent / "rl-pipeline" / "env"))
+from rocket_landing_env import RocketLandingEnv
 
 
 def plot_training_curve(log_dir: Path, destination: Path, window: int = 50) -> None:

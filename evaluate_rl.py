@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 
 import gymnasium as gym
 import matplotlib
@@ -13,7 +14,8 @@ import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
-from env.rocket_landing_env import RocketLandingEnv
+sys.path.insert(0, str(Path(__file__).resolve().parent / "rl-pipeline" / "env"))
+from rocket_landing_env import RocketLandingEnv
 
 
 class RawStateInfo(gym.Wrapper):
@@ -43,7 +45,7 @@ def plot_trajectory(rows, destination: Path) -> None:
     ax.plot(x, y, color='steelblue', label='Trajectory')
     ax.scatter(x[0], y[0], marker='o', label='Start')
     ax.scatter(x[-1], y[-1], marker='x', label='End')
-    ax.plot([-2, 2], [0, 0], color='green', linewidth=4, label='Target pad')
+    ax.plot([-2.5, 2.5], [0, 0], color='green', linewidth=4, label='Target pad')
     # The logged action applies during the preceding step: anchor arrows at
     # the preceding position and use the preceding attitude, not a later one.
     indices = np.arange(1, len(rows), max(1, (len(rows)-1)//30))
@@ -106,8 +108,8 @@ def main() -> None:
             obs, _, dones, infos = env.step(action)
             info = infos[0]
             current = info['raw_observation']
-            rows.append(row(current, info['time'], info['thrust'], info['gimbal_angle'],
-                            float(previous[4])+info['gimbal_angle']))
+            rows.append(row(current, info['time'], info['thrust'], info['gimbal_rad'],
+                            float(previous[4])+info['gimbal_rad']))
             total_reward += info['raw_reward']
             previous = current.copy()
             if dones[0]:

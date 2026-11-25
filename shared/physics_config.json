@@ -1,6 +1,7 @@
 {
   "dt": 0.05,
   "gravity": 9.81,
+  "wind_acceleration_per_mps": 0.1,
   "dry_mass": 1000.0,
   "initial_fuel_mass": 500.0,
   "max_thrust": 22000.0,

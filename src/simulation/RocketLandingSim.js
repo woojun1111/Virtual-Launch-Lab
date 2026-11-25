@@ -12,6 +12,7 @@ export class RocketLandingSim {
     this.state = null;
     this.stepCount = 0;
     this._stepping = false;
+    this.windSpeed = 0;
   }
 
   async init() {
@@ -39,6 +40,11 @@ export class RocketLandingSim {
     return this.getState();
   }
 
+  setWindSpeed(speed) {
+    if (!Number.isFinite(speed)) throw new Error('Wind speed must be finite');
+    this.windSpeed = speed;
+  }
+
   getState() { return this.state ? {...this.state} : null; }
 
   async step(fixedDt = this.config?.dt, manualAction = null) {
@@ -50,6 +56,7 @@ export class RocketLandingSim {
     this._stepping = true;
     try {
       const old = this.state, c = this.config, dt = c.dt;
+      const windSpeed = this.windSpeed;
       let a;
       if (manualAction !== null) {
         if (![manualAction.thrustRatio,manualAction.gimbalRad].every(Number.isFinite))
@@ -66,7 +73,7 @@ export class RocketLandingSim {
       const {thrust,thrustRatio,gimbalRad} = a;
       if (![thrust,thrustRatio,gimbalRad].every(Number.isFinite)) throw new Error('Invalid action');
       const mass = c.dry_mass+old.fuel;
-      const fx = -thrust*Math.sin(old.theta+gimbalRad);
+      const fx = -thrust*Math.sin(old.theta+gimbalRad) + mass*c.wind_acceleration_per_mps*windSpeed;
       const fy = thrust*Math.cos(old.theta+gimbalRad)-mass*c.gravity;
       const torque = -thrust*Math.sin(gimbalRad)*(c.rocket_length/2);
       // Explicit Euler, using OLD velocities and OLD mass throughout.

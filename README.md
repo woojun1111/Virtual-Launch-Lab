@@ -1,6 +1,6 @@
 # Virtual Launch Lab
 
-Three.js로 표시하는 **2D 로켓 착륙 실험실**입니다. 공중에서 시작해 추력과 짐벌을 조절합니다. 수동 조종과 저장소에 포함된 PPO 모델의 브라우저 추론을 지원합니다. 배포 버전 18에서 무작위 하강 50회 중 50회 착륙을 관측했습니다.
+가상 로켓 착륙 실험실입니다. **물리는 X–Y 평면의 2D 운동**으로 계산하며, Three.js의 3D 장면은 기체와 궤적을 시각적으로 표현합니다. 공중에서 시작해 추력과 짐벌을 조절합니다. 수동 조종과 저장소에 포함된 PPO 모델의 브라우저 추론을 지원합니다. 배포 버전 18에서 무작위 하강 50회 중 50회 착륙을 관측했습니다.
 
 [웹 시뮬레이터](https://virtual-launch-lab-woojun.aa01066365388.chatgpt.site) · [개발 파이프라인 한눈에 보기](docs/development-pipeline.md) · [이전 실험 기록](docs/legacy-experiments.md)
 
@@ -56,13 +56,24 @@ python rl-pipeline/export_onnx.py
 
 ### 배포 모델 평가 재현
 
-위 의존성을 설치한 후 저장소 루트에서 `python rl-pipeline/evaluate_release.py`를 실행하세요. CPU에서 실제 ONNX와 저장된 정규화 통계를 읽고 시드 1000~1049의 종료 결과를 집계합니다. 웹 벤치마크는 매번 무작위 초기 조건을 사용합니다. [배포 파일 체크섬](public/models/README.md)
+`python rl-pipeline/evaluate_release.py`는 현재 릴리스 파일을 CPU에서 읽고, 시드 0–99로 조건당 100회 평가한 뒤 결과를 콘솔과 `docs/evaluation-report.md`에 기록합니다.
+
+| 조건 | 성공률 | out_of_bounds | crash | timeout | 접지 표본 |
+|---|---:|---:|---:|---:|---:|
+| 기본 조건 | 98/100 | 0 | 2 | 0 | 100 |
+| 초기 조건 범위 1.5배 | 84/100 | 2 | 14 | 0 | 98 |
+| 측풍 −5 m/s | 1/100 | 0 | 99 | 0 | 100 |
+| 측풍 +5 m/s | 0/100 | 0 | 100 | 0 | 100 |
+
+웹 버전 18의 기존 무작위 50회 평가와 이 고정 시드 평가는 초기 조건이 다릅니다. 보고서에서 에피소드별 초기 상태, 실제 접지 표본의 오차와 성공 기준 대비 여유율을 확인할 수 있습니다. [평가 보고서](docs/evaluation-report.md) · [배포 파일 체크섬](public/models/README.md)
 
 ## 구조
 
 | 위치 | 역할 |
 |---|---|
-| `src/main.js` | 직렬 추론·고정 스텝 누적기·렌더링·모드 전환 |
+| `src/main.js` | 앱 초기화·화면 구성·UI 이벤트 연결 |
+| `src/simulationController.js` | 직렬 추론·고정 스텝 누적기·모드 전환 |
+| `src/batchEvaluator.js` | 자동 반복 예약·성공률 집계 |
 | `src/simulation/` | 웹 물리·종료 판정 |
 | `src/controls/` | 키보드 수동 조종 |
 | `src/ai/` | ONNX 정규화·추론 |
@@ -70,7 +81,7 @@ python rl-pipeline/export_onnx.py
 | `rl-pipeline/`, `shared/` | 새 웹 앱과 대응하는 학습 환경·공통 상수 |
 | `out/` | 빌드 결과 (Git 추적 제외) |
 | `dist/`, `physics/`, `experiments/` | 이전 발사·리플레이·강체 실험 |
-| 루트 `env/`, `train_rl.py`, `evaluate_rl.py` | 이전 Python 실험. 새 `rl-pipeline/`과 상수·보상이 다름 |
+| 루트 `train_rl.py`, `evaluate_rl.py` | 체크포인트 및 궤적 출력 도구. 공식 `rl-pipeline/env/`를 사용 |
 
 ## 검증과 빌드
 
@@ -80,7 +91,7 @@ npm run build
 npm run preview
 ```
 
-`npm test`는 새 웹 모듈 및 기존 CJS 테스트를 실행합니다. Python 검증은 `python -m unittest discover -s tests -p "test_*.py"`로 별도 실행합니다(이전 Python 환경 대상).
+`npm test`는 새 웹 모듈 및 기존 CJS 테스트를 실행합니다. Python 검증은 `python -m unittest discover -s tests -p "test_*.py"`로 별도 실행합니다(공식 Python 환경과 Node.js 시뮬레이션을 대조하며 Node.js도 필요합니다).
 
 브라우저 주사율과 무관하게 물리 dt를 고정하며, ONNX 추론은 한 번에 한 스텝만 진행합니다. 느린 장치에서는 실제 시간보다 재생이 느려질 수 있습니다. Python/JS/ONNX의 비트 단위 일치나 학습 성능을 보장하지 않습니다.
 
@@ -91,7 +102,7 @@ Space Grotesk / JetBrains Mono, 글래스 패널, 시안·앰버 게이지, 다�
 - 통계는 완료된 에피소드만 한 번 집계하며 수동/AI를 합친 전체 결과입니다. 시간 제한도 시도 횟수에 포함됩니다. `AVG FINAL X`는 종료 시 수평 오차로, 접지하지 않은 실행도 포함합니다.
 - AUTO-BENCHMARK는 로드된 PPO 모드에서만 켤 수 있으며, 첫 실행은 시작 버튼으로 시작합니다. 재생 속도에 따른 대기 시간 후 다음 무작위 드롭을 자동 실행합니다. 학습이나 정책 최적화를 수행하지 않습니다.
 - 수동 리셋·모드 변경·오류·토글 해제 시 재시작 타이머를 취소합니다. 숨겨진 탭에서는 다음 실행을 시작하지 않습니다.
-- 측풍 슬라이더는 콜백 연결을 지원하는 UI지만 현재 물리 엔진에는 연결하지 않았습니다. 화면에서 `NOT CONNECTED`와 비활성 상태로 표시됩니다.
+- 측풍 슬라이더의 기본값은 0 m/s입니다. 가상 외란은 `수평 가속도 = 0.1 × 풍속`으로 더합니다. 슬라이더 변경은 다음 물리 스텝부터 반영되며 자동 반복에도 같은 설정이 적용됩니다.
 - ZEM/ZEV·호버슬램 폴백 및 Python 보상/학습 변경은 포함되지 않았습니다. 모델이 없으면 AI 모드를 실행할 수 없습니다.
 
 이번 디자인 업데이트는 요청에 따라 테스트·학습을 실행하지 않았으며, 배포용 빌드만 수행합니다.

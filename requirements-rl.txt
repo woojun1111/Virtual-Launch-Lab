@@ -1,3 +1,1 @@
--r env/requirements.txt
-stable-baselines3>=2.4,<3
-matplotlib>=3.7,<4
+-r rl-pipeline/requirements.txt

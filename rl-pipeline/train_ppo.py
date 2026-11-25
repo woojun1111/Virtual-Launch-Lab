@@ -1,4 +1,9 @@
-"""Train the synthetic task. Run explicitly; importing this file never trains."""
+"""Train the repository's baseline synthetic task.
+
+This entry point applies the reward in RocketLandingEnv and does not apply a
+potential wrapper. The exact training run that produced the deployed artifacts
+is not recoverable from the ONNX graph and observation statistics alone.
+"""
 from pathlib import Path
 import sys
 
@@ -8,7 +13,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 PIPELINE_DIR = Path(__file__).resolve().parent
 MODELS_DIR = PIPELINE_DIR / 'models'
-# Avoid accidentally importing the older repository-root env/ package.
+# Use the environment resolved relative to this script.
 sys.path.insert(0, str(PIPELINE_DIR / 'env'))
 from rocket_landing_env import RocketLandingEnv
 

@@ -1,67 +1,77 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { RocketLandingSim } from './simulation/RocketLandingSim.js';
-import physicsConfig from '../shared/physics_config.json';
-import RocketRLController from './ai/RocketRLController.js';
 import { ManualRocketController } from './controls/ManualRocketController.js';
 import { TelemetryHUD } from './ui/TelemetryHUD.js';
 import { TrajectoryVisualizer } from './scene/TrajectoryVisualizer.js';
 import { ExhaustPlumeParticles } from './scene/ExhaustPlumeParticles.js';
 import { RocketVisual } from './scene/RocketMeshBuilder.js';
+import { SimulationController } from './simulationController.js';
 
 export class VirtualLaunchLabApp {
   constructor() {
     this.container = document.getElementById('app') || document.body;
-    this.requestedMode = new URLSearchParams(location.search).get('mode') === 'ppo' ? 'AI' : 'MANUAL';
-    this.controlMode = 'MANUAL';
-    this.aiController = new RocketRLController();
-    this.sim = new RocketLandingSim({
-      config: Object.freeze({ ...physicsConfig }),
-      async init() {},
-      async predictAction() {
-        throw new Error('AI model is not loaded; supply a manual action');
-      }
-    });
     this.manualController = new ManualRocketController({
       onToggleMode: () => {
-        void this.changeMode(this.controlMode === 'AI' ? 'MANUAL' : 'AI');
+        void this.controller.changeMode(this.controller.controlMode === 'AI' ? 'MANUAL' : 'AI');
       }
     });
-    this.switchingMode = false;
-    this.episodeVersion = 0;
-    this.autoBenchmark = false;
-    this.autoBenchmarkTimer = null;
-    this.autoRestartRequested = false;
-    this.simSpeed = 1;
-    this.runCount = 0;
-    this.recentLandings = [];
-    this.paused = true;
-    this.rocketVisual = new RocketVisual(10.0);
-
-    this.FIXED_DT = physicsConfig.dt;
-    this.accumulator = 0;
-    this.lastFrame = null;
-    this.pendingStep = null;
-    this.resetRequested = false;
-    this.running = false;
-    this.disposed = false;
-    this.failed = false;
     this.hud = new TelemetryHUD({
-      onReset: () => this.resetSimulation(),
-      initialMode: this.controlMode,
-      onModeChange: (mode) => {
-        void this.changeMode(mode);
-      },
-      onAutoBenchmarkToggle: (enabled) => this.setAutoBenchmark(enabled)
+      onReset: () => this.controller.resetSimulation(),
+      onModeChange: (mode) => { void this.controller.changeMode(mode); },
+      onWindChange: (speed) => this.controller.sim.setWindSpeed(speed),
+      onAutoBenchmarkToggle: (enabled) => this.controller.setAutoBenchmark(enabled)
+    });
+    this.controller = new SimulationController({
+      view: this,
+      hud: this.hud,
+      manualController: this.manualController,
+      requestedMode: new URLSearchParams(location.search).get('mode') === 'ppo' ? 'AI' : 'MANUAL'
     });
     this._createControls();
     this.hud.setResetEnabled(false);
     this.hud.setMessage('INITIALIZING');
-    this.latestState = null;
-
     this._initScene();
     this._initEnvironment();
     this._bindEvents();
+  }
+
+  start() {
+    return this.controller.start();
+  }
+
+  configureScene(config) {
+    this.rocketVisual = new RocketVisual(config.rocket_length);
+    this.scene.add(this.rocketVisual.rootGroup);
+    this.trajectoryVis.gravity = config.gravity;
+  }
+
+  resetScene(state) {
+    this.rocketVisual.resetVisuals();
+    this.trajectoryVis.reset();
+    this.exhaustParticles.reset();
+    this.recordTrajectory(state);
+    this.camera.position.set(state.x * 0.5, 110, 330);
+    this.controls.target.set(0, 100, 0);
+  }
+
+  renderFrame(state, timestamp, visualDt) {
+    if (state) {
+      this.rocketVisual.updateVisuals(state, timestamp / 1000);
+      this.hud.update(state);
+      this.trajectoryVis.updatePrediction(state, state.time);
+      this.rocketVisual.getNozzleWorldPosition(this.nozzlePosition);
+      this.exhaustParticles.update(state, visualDt, this.nozzlePosition);
+    }
+    this.controls.update();
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  setPlayLabel(label) {
+    this.playButton.textContent = label;
+  }
+
+  focusScene() {
+    this.renderer.domElement.focus();
   }
 
   _initScene() {
@@ -94,7 +104,6 @@ export class VirtualLaunchLabApp {
     dirLight.castShadow = true;
     this.scene.add(dirLight);
 
-    this.scene.add(this.rocketVisual.rootGroup);
     this.trajectoryVis = new TrajectoryVisualizer(this.scene);
     this.exhaustParticles = new ExhaustPlumeParticles(this.scene);
     this.nozzlePosition = new THREE.Vector3();
@@ -132,149 +141,14 @@ export class VirtualLaunchLabApp {
     this.scene.add(backlight, backlight.target);
   }
 
-  async start() {
-    if (this.running || this.disposed) return;
-    try {
-      await this.sim.init();
-      if (this.disposed) return;
-      this.rocketVisual.dispose();
-      this.rocketVisual = new RocketVisual(this.sim.config.rocket_length);
-      this.scene.add(this.rocketVisual.rootGroup);
-      this.trajectoryVis.gravity = this.sim.config.gravity;
-      this.manualController.maxGimbalRad = (this.sim.config.max_gimbal_deg * Math.PI) / 180;
-      this.manualController.minThrustRatio = this.sim.config.min_thrust_ratio;
-      this.hud.initialFuel = this.sim.config.initial_fuel_mass;
-      this.running = true;
-      this.hud.setResetEnabled(true);
-      this._updateBenchmarkPanel();
-      this.resetSimulation();
-      this.frameId = requestAnimationFrame((t) => this._animate(t));
-      if (this.requestedMode === 'AI') await this.changeMode('AI');
-    } catch (error) {
-      this._showError(error);
-    }
-    return this;
-  }
-
-  resetSimulation({ automatic = false } = {}) {
-    this._clearAutoRestart();
-    if (!automatic) this.setAutoBenchmark(false);
-    this.autoRestartRequested = automatic;
-    if (!this.running || this.disposed) return;
-    this.resetRequested = true;
-    this.hud.setResetEnabled(false);
-    if (!this.pendingStep) this._applyReset();
-  }
-
-  _applyReset() {
-    this.episodeVersion++;
-    this.resetRequested = false;
-    this.failed = false;
-    this.accumulator = 0;
-    this.lastFrame = null;
-    const random = (a, b) => a + Math.random() * (b - a);
-    this.latestState = this.sim.reset({
-      x: random(-50, 50),
-      y: random(150, 250),
-      vx: random(-10, 10),
-      vy: random(-25, -5),
-      theta: random(-0.2, 0.2),
-      omega: 0,
-      fuel: this.sim.config.initial_fuel_mass
-    });
-    this.manualController.reset();
-    this.rocketVisual.resetVisuals();
-    this.trajectoryVis.reset();
-    this.exhaustParticles.reset();
-    this._recordTrajectory(this.latestState);
-    this.hud.hideBanner();
-    this.hud.setResetEnabled(true);
-    this.paused = true;
-    if (this.autoRestartRequested) this.paused = false;
-    this.autoRestartRequested = false;
-    this.playButton.textContent = this.paused ? '시뮬레이션 시작' : '일시정지';
-    this.camera.position.set(this.latestState.x * 0.5, 110, 330);
-    this.controls.target.set(0, 100, 0);
-    this._updateBenchmarkPanel();
-  }
-
-  _animate(timestamp) {
-    if (this.disposed) return;
-    this.frameId = requestAnimationFrame((t) => this._animate(t));
-    const dt = this.lastFrame === null ? 0 : Math.max(0, (timestamp - this.lastFrame) / 1000);
-    this.lastFrame = timestamp;
-    if (!this.paused && !document.hidden && !this.failed && this.latestState && !this.latestState.done) {
-      const maxBacklog = Math.min(2.5, 0.25 * this.simSpeed);
-      this.accumulator = Math.min(maxBacklog, this.accumulator + dt * this.simSpeed);
-      this._pumpPhysics();
-    }
-    if (this.latestState) {
-      this.rocketVisual.updateVisuals(this.latestState, timestamp / 1000);
-      this.hud.update(this.latestState);
-      this.trajectoryVis.updatePrediction(this.latestState, this.latestState.time);
-      this.rocketVisual.getNozzleWorldPosition(this.nozzlePosition);
-      this.exhaustParticles.update(
-        this.latestState,
-        this.paused || document.hidden || this.failed ? 0 : dt * Math.min(this.simSpeed, 4),
-        this.nozzlePosition
-      );
-    }
-    this.controls.update();
-    this.renderer.render(this.scene, this.camera);
-  }
-
-  _pumpPhysics() {
-    if (
-      this.paused ||
-      this.pendingStep ||
-      this.resetRequested ||
-      this.failed ||
-      document.hidden ||
-      this.latestState.done ||
-      this.accumulator + 1e-12 < this.FIXED_DT
-    ) {
-      return;
-    }
-    this.accumulator = Math.max(0, this.accumulator - this.FIXED_DT);
-    const manualAction = this.controlMode === 'MANUAL' ? this.manualController.update(this.FIXED_DT) : null;
-    this.pendingStep = this.sim
-      .step(this.FIXED_DT, manualAction)
-      .then((state) => {
-        if (!this.disposed && !this.resetRequested) {
-          this.latestState = state;
-          this._recordTrajectory(state);
-          if (state.done) {
-            if (this.controlMode === 'AI') {
-              this.runCount += 1;
-              this.recentLandings.push(state.isSuccess ? 1 : 0);
-              if (this.recentLandings.length > 20) this.recentLandings.shift();
-              this._updateBenchmarkPanel();
-            }
-            this.hud.recordResult(state, this.episodeVersion);
-            this._scheduleAutoRestart();
-          }
-        }
-        if (state.done) this.accumulator = 0;
-      })
-      .catch((error) => {
-        if (!this.disposed) this._showError(error);
-      })
-      .finally(() => {
-        this.pendingStep = null;
-        if (this.disposed) return;
-        if (this.resetRequested) this._applyReset();
-        else this._pumpPhysics();
-      });
-  }
-
-  _recordTrajectory(state) {
+  recordTrajectory(state) {
     this.rocketVisual.setPose(state);
     this.rocketVisual.getNozzleWorldPosition(this.nozzlePosition);
     this.trajectoryVis.recordStep(state, this.nozzlePosition);
   }
 
   _setSimSpeed(speed) {
-    this.simSpeed = speed;
+    this.controller.setSimSpeed(speed);
     if (this.speedButtons) {
       for (const [s, btn] of Object.entries(this.speedButtons)) {
         const active = Number(s) === speed;
@@ -283,23 +157,14 @@ export class VirtualLaunchLabApp {
         btn.style.color = active ? '#e0f2fe' : '#94a3b8';
       }
     }
-    if (this.autoBenchmark && this.latestState?.done) {
-      this._clearAutoRestart();
-      this._scheduleAutoRestart();
-    }
   }
 
-  _updateBenchmarkPanel() {
+  updateBenchmarkPanel(mode, batch) {
     if (!this.benchStatsText || !this.benchStatusTag) return;
-    const isAI = this.controlMode === 'AI';
-    this.benchStatusTag.textContent = isAI ? (this.autoBenchmark ? 'AUTO RUN' : 'AI READY') : 'STANDBY';
+    const isAI = mode === 'AI';
+    this.benchStatusTag.textContent = isAI ? (batch.enabled ? 'AUTO RUN' : 'AI READY') : 'STANDBY';
     this.benchStatusTag.style.color = isAI ? '#38bdf8' : '#94a3b8';
-
-    const rate =
-      this.recentLandings.length > 0
-        ? Math.round((this.recentLandings.reduce((a, b) => a + b, 0) / this.recentLandings.length) * 100)
-        : 0;
-    this.benchStatsText.textContent = `RUN #${this.runCount} · 최근 20회 착륙 성공률 ${rate}%`;
+    this.benchStatsText.textContent = `RUN #${batch.runCount} · 최근 20회 착륙 성공률 ${batch.successRate}%`;
   }
 
   _createControls() {
@@ -309,15 +174,7 @@ export class VirtualLaunchLabApp {
     this.playButton = document.createElement('button');
     this.playButton.className = 'vll-btn-action';
     this.playButton.textContent = '시뮬레이션 시작';
-    this.playButton.onclick = () => {
-      if (!this.running || this.switchingMode || this.failed || this.latestState?.done) return;
-      this.paused = !this.paused;
-      this.accumulator = 0;
-      this.lastFrame = null;
-      this.playButton.textContent = this.paused ? '계속 실행' : '일시정지';
-      this.manualController.keys.clear();
-      this.renderer.domElement.focus();
-    };
+    this.playButton.onclick = () => this.controller.togglePlayback();
     panel.appendChild(this.playButton);
 
     const benchCard = document.createElement('div');
@@ -384,11 +241,7 @@ export class VirtualLaunchLabApp {
     resetCountBtn.style.background = 'rgba(30, 41, 59, 0.6)';
     resetCountBtn.style.color = '#e2e8f0';
     resetCountBtn.style.cursor = 'pointer';
-    resetCountBtn.onclick = () => {
-      this.runCount = 0;
-      this.recentLandings = [];
-      this._updateBenchmarkPanel();
-    };
+    resetCountBtn.onclick = () => this.controller.batch.resetStats();
     btnRow.appendChild(resetCountBtn);
 
     benchCard.append(headerRow, this.benchStatsText, btnRow);
@@ -406,120 +259,6 @@ export class VirtualLaunchLabApp {
     legend.textContent =
       '파랑: 노즐 궤적 · 점선/링: 추력·항력 제외 낙하지점. 초록 ≤2.5m / 주황 ≤12m / 빨강 >12m. 초록은 착륙 성공을 뜻하지 않습니다.';
     panel.append(legend);
-  }
-
-  async changeMode(mode) {
-    if (!this.running || this.disposed || this.switchingMode || mode === this.controlMode) return;
-    this.setAutoBenchmark(false);
-    this.switchingMode = true;
-    this.hud.setModeBusy(true);
-    const wasPaused = this.paused;
-    const episodeVersion = this.episodeVersion;
-    this.paused = true;
-    this.accumulator = 0;
-    this.manualController.keys.clear();
-    try {
-      await this.pendingStep;
-      if (mode === 'AI') {
-        this.hud.setMessage('LOADING PPO MODEL');
-        if (!this.aiController.isReady) this.hud.setModelConnection('ONNX 로딩 중');
-        await this.aiController.init();
-        if (!this.aiController.isReady) {
-          if (!this.disposed) {
-            this.hud.setMode(this.controlMode, false);
-            this.hud.setModelConnection('로드 실패 · ' + this.aiController.loadMessage);
-            this.hud.setMessage(
-              'MODEL UNAVAILABLE',
-              this.aiController.loadMessage + ' 수동 조종은 계속 사용할 수 있습니다.'
-            );
-            this.playButton.textContent = '계속 실행';
-          }
-          return;
-        }
-        for (const [key, value] of Object.entries(this.sim.config)) {
-          if (this.aiController.config[key] !== value) throw new Error(`Physics mismatch: ${key}`);
-        }
-      }
-      if (this.disposed) return;
-      this.controlMode = mode;
-      if (mode === 'AI') {
-        this.sim.controller = this.aiController;
-        this.hud.setModelConnection('ONNX 로드 완료');
-      }
-      this.manualController.reset();
-      this.manualController.setEnabled(mode === 'MANUAL');
-      this.hud.setMode(mode, false);
-      this.hud.setMessage(mode === 'AI' ? 'PPO READY' : 'MANUAL READY');
-      this.failed = false;
-      this.paused = this.episodeVersion !== episodeVersion ? true : wasPaused;
-      this.playButton.textContent = this.paused ? '계속 실행' : '일시정지';
-      if (mode === 'AI') {
-        this.setAutoBenchmark(true);
-      }
-      this._updateBenchmarkPanel();
-      this.renderer.domElement.focus();
-    } catch (error) {
-      if (!this.disposed) {
-        this.hud.setMode(this.controlMode, false);
-        this.hud.setMessage(`모드 전환 실패: ${error.message}`);
-        this.playButton.textContent = '계속 실행';
-      }
-    } finally {
-      this.switchingMode = false;
-      this.lastFrame = null;
-      this.accumulator = 0;
-      if (!this.disposed) this.hud.setModeBusy(false);
-    }
-  }
-
-  setAutoBenchmark(enabled) {
-    this._clearAutoRestart();
-    this.autoBenchmark = Boolean(enabled && this.controlMode === 'AI' && this.aiController.session && !this.failed);
-    this.hud.setAutoBenchmark(this.autoBenchmark);
-    this._updateBenchmarkPanel();
-    if (enabled && !this.autoBenchmark) {
-      this.hud.setMessage('자동 반복은 로드된 PPO 모드에서 사용할 수 있습니다.');
-    }
-    if (this.autoBenchmark) this._scheduleAutoRestart();
-  }
-
-  _clearAutoRestart() {
-    if (this.autoBenchmarkTimer !== null) clearTimeout(this.autoBenchmarkTimer);
-    this.autoBenchmarkTimer = null;
-  }
-
-  _scheduleAutoRestart() {
-    if (
-      !this.autoBenchmark ||
-      !this.latestState?.done ||
-      this.disposed ||
-      document.hidden ||
-      this.autoBenchmarkTimer !== null
-    ) {
-      return;
-    }
-    const episode = this.episodeVersion;
-    const delayMs = this.simSpeed >= 10 ? 120 : this.simSpeed > 1 ? 400 : 1200;
-    this.autoBenchmarkTimer = setTimeout(() => {
-      this.autoBenchmarkTimer = null;
-      if (
-        episode === this.episodeVersion &&
-        this.autoBenchmark &&
-        !this.disposed &&
-        !document.hidden &&
-        !this.switchingMode
-      ) {
-        this.resetSimulation({ automatic: true });
-      }
-    }, delayMs);
-  }
-
-  _showError(error) {
-    this.setAutoBenchmark(false);
-    this.failed = true;
-    this.accumulator = 0;
-    this.hud.setMessage(`ERROR: ${error.message}`);
-    console.error(error);
   }
 
   _bindEvents() {
@@ -541,30 +280,20 @@ export class VirtualLaunchLabApp {
       ) {
         return;
       }
-      if (event.key.toLowerCase() === 'r') this.resetSimulation();
+      if (event.key.toLowerCase() === 'r') this.controller.resetSimulation();
     };
-    this.onVisibility = () => {
-      this.accumulator = 0;
-      this.lastFrame = null;
-      this.manualController.keys.clear();
-      if (document.hidden) this._clearAutoRestart();
-      else this._scheduleAutoRestart();
-    };
+    this.onVisibility = () => this.controller.handleVisibility();
     window.addEventListener('resize', this.onResize);
     window.addEventListener('keydown', this.onKey);
     document.addEventListener('visibilitychange', this.onVisibility);
   }
 
   async dispose() {
-    this._clearAutoRestart();
-    this.disposed = true;
-    this.running = false;
-    cancelAnimationFrame(this.frameId);
     window.removeEventListener('resize', this.onResize);
     window.removeEventListener('keydown', this.onKey);
     document.removeEventListener('visibilitychange', this.onVisibility);
-    await this.pendingStep;
-    this.rocketVisual.dispose();
+    await this.controller.dispose();
+    this.rocketVisual?.dispose();
     this.trajectoryVis.dispose();
     this.exhaustParticles.dispose();
     this.scene.traverse((object) => {
@@ -578,8 +307,7 @@ export class VirtualLaunchLabApp {
     this.renderer.domElement.remove();
     this.manualController.dispose();
     this.hud.dispose();
-    if (this.aiController._initPromise) await this.aiController._initPromise.catch(() => {});
-    await this.aiController.dispose();
+
   }
 }
 

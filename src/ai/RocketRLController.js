@@ -52,7 +52,7 @@ export class RocketRLController {
       for (const key of ['dt', 'dry_mass', 'max_thrust', 'rocket_length', 'moment_of_inertia']) {
         if (!Number.isFinite(config[key]) || config[key] <= 0) throw new Error(`Invalid ${key}`);
       }
-      for (const key of ['gravity', 'initial_fuel_mass', 'max_gimbal_deg', 'fuel_consumption_rate']) {
+      for (const key of ['gravity', 'initial_fuel_mass', 'max_gimbal_deg', 'fuel_consumption_rate', 'wind_acceleration_per_mps']) {
         if (!Number.isFinite(config[key]) || config[key] < 0) throw new Error(`Invalid ${key}`);
       }
       if (!Number.isFinite(config.min_thrust_ratio) || config.min_thrust_ratio < 0 || config.min_thrust_ratio > 1) {
