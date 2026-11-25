@@ -8,6 +8,8 @@ from pathlib import Path
 
 import torch
 from stable_baselines3 import PPO
+from stable_baselines3.common.distributions import DiagGaussianDistribution
+from stable_baselines3.common.torch_layers import FlattenExtractor
 from stable_baselines3.common.vec_env import VecNormalize
 from train_ppo import MODELS_DIR, make_base_env
 
@@ -15,13 +17,18 @@ from train_ppo import MODELS_DIR, make_base_env
 class OnnxablePolicy(torch.nn.Module):
     def __init__(self, policy):
         super().__init__()
-        self.policy = policy
+        if not isinstance(policy.action_dist, DiagGaussianDistribution) or not isinstance(
+            policy.pi_features_extractor, FlattenExtractor
+        ):
+            raise ValueError("Expected the flat-observation diagonal Gaussian MlpPolicy")
+        self.features = policy.pi_features_extractor
+        self.actor = policy.mlp_extractor.policy_net
+        self.mean = policy.action_net
 
     def forward(self, obs):
-        actions, _, _ = self.policy(obs, deterministic=True)
-        # Gaussian MlpPolicy.forward does not clip; PPO.predict does. Export
-        # the same bounded deterministic actions used by predict at inference.
-        return torch.clamp(actions, -1.0, 1.0)
+        # For this unsquashed Gaussian, SB3 deterministic=True selects its mean.
+        features = self.features(obs.float())
+        return torch.clamp(self.mean(self.actor(features)), -1.0, 1.0)
 
 
 def main():
